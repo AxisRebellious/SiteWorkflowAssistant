@@ -1,0 +1,16 @@
+# Source-only repo. Customer zips are built from the working tree, not from git.
+runtime/
+admin_data/
+.venv/
+.venv_new/
+pw-browsers/
+data/logs/
+data/license.json
+data/update_stage/
+data/update_stage.zip
+data/last_port.txt
+data/config.json
+__pycache__/
+*.pyc
+*.pyo
+*.log

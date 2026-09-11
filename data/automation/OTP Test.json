@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "created": "2026-05-06T15:27:45Z",
+  "default_values": {},
+  "pause_between_tasks_ms": 0,
+  "pause_between_steps_ms": 0,
+  "playback_health_refresh_interval_s": 0,
+  "sms_otp_wait_seconds": 600,
+  "start_url": "https://www.okala.com/auth",
+  "show_click_marker": true,
+  "steps": [
+    {
+      "id": "fill_4",
+      "type": "fill",
+      "selector": "#mobile",
+      "value": "09912141636",
+      "param": "mobile",
+      "delay_ms": 0
+    },
+    {
+      "id": "clk_5",
+      "type": "click",
+      "selector": "html > body > main > div > div:nth-of-type(2) > div > div > button",
+      "delay_ms": 0
+    },
+    {
+      "id": "fill_8",
+      "type": "fill",
+      "selector": "#login-otp",
+      "value": "",
+      "param": null,
+      "sms_otp": true,
+      "sms_otp_min_digits": 5,
+      "sms_otp_max_digits": 6,
+      "sms_otp_prompt": "کد ورود اکالا (پیامک) را در همین چت بفرستید. فقط عدد کافی است.",
+      "delay_ms": 0
+    },
+    {
+      "id": "clk_9",
+      "type": "click",
+      "selector": "html > body > main > div > div:nth-of-type(2) > div > div > button",
+      "delay_ms": 0,
+      "notify_bale_login_success": true
+    }
+  ],
+  "runs": [
+    {
+      "label": "بار نخست",
+      "values": {
+        "mobile": "09912141636"
+      }
+    }
+  ],
+  "notes": "ورود okala: شماره → ارسال کد → کد از بله (sms_otp) → تأیید. goto به /stores حذف شده. توکن و chat_id بله را در برنامه پر کنید.",
+  "meta": {
+    "id": "OTP Test",
+    "name": "OTP Test",
+    "saved": "2026-05-06T15:27:59Z"
+  }
+}

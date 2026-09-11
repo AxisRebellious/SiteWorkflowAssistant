@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "created": "2026-07-01T00:00:00Z",
+  "default_values": {},
+  "pause_between_tasks_ms": 0,
+  "pause_between_steps_ms": 0,
+  "playback_health_refresh_interval_s": 0,
+  "start_url": "https://www.mtcaptcha.com/test-multiple-captcha",
+  "show_click_marker": true,
+  "auto_solve_captcha": true,
+  "steps": [
+    {
+      "id": "goto_1",
+      "type": "goto",
+      "url": "https://www.mtcaptcha.com/test-multiple-captcha"
+    },
+    {
+      "id": "clk_submit",
+      "type": "click",
+      "selector": "button[type='submit'], input[type='submit'], button:has-text('submit')",
+      "delay_ms": 500
+    }
+  ],
+  "runs": [
+    {
+      "label": "تست mtcaptcha",
+      "values": {}
+    }
+  ],
+  "notes": "تست حل خودکار mtcaptcha",
+  "meta": {
+    "id": "mtcaptcha-test",
+    "name": "mtcaptcha-test",
+    "saved": "2026-07-01T00:00:00Z"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "created": "2026-06-30T19:51:12Z",
+  "default_values": {},
+  "pause_between_tasks_ms": 0,
+  "pause_between_steps_ms": 0,
+  "start_url": null,
+  "show_click_marker": true,
+  "steps": [],
+  "runs": [
+    {
+      "label": "بار نخست",
+      "values": {}
+    }
+  ],
+  "notes": "برای مقداری که هر بار فرق می‌کند پارام ست کن (مثل amount): در هر fill فیلٔ param را پر کن و در runs همان کلید را بگذار. برای کلیک یا پر کردن کند timeout_ms بگذار. مکث یکنواخت بعد از هر قدم: pause_between_steps_ms یا فرم اجرا (اگر در JSON نبود پیش‌فرض سرور ۱۵۰۰ms). playback_health_refresh_interval_s: ثانیه بین رفرش خودکار صفحه برای امتحان اتصال (۰=خاموش؛ پیش‌فرض سرور ۳۰؛ روی نشانی‌های auth/login/otp رفرش کامل خاموش تا SPA ورود قطع نشود). start_url برای ورود. show_click_marker: true نشانگر روی کلیک/پر کردن. باز کردن صفحه و همچنین انتظار برای آماده‌شدن المان در کلیک/پر کردن وقتی سایت کند یا قطع است: nav_retry_pause_seconds (ثانیه بین تلاش‌ها، پیش‌فرض 10)، nav_retry_goto_timeout_ms (میلی‌ثانیهٔ هر تلاش برای goto؛ برای کلیک/fill همان timeout_ms قدم یا همین سقف کمینهٔ داخلی)، برای سقف شمارٔ تلاش nav_retry_max_attempts (≥۲ یا حذف برای نامحدود؛ ۱ نادیده گرفته می‌شود). پیش‌فرض بعد از خطا مرورگر بسته می‌شود؛ با keep_browser_on_failure: true پنجرهٔ خطا باز بماند. مسیرهای nth-of-type شکننده‌اند. پخش با کد پیامک از بله: روی قدمٔ fill که کد یک‌بار مصرف است true بگذار sms_otp یا sms_otp_fill؛ در فرم پخش توکن بازو و chat_id بله را بده (همان چتی که کد را می‌فرستی). sms_otp_wait_seconds در ریشهٔ سناریو — سقف ثانیه انتظار برای کد (۳۰…۷۲۰۰؛ پیش‌فرض ۶۰۰). اختیاری روی همان قدم: sms_otp_prompt، sms_otp_min_digits، sms_otp_max_digits، sms_otp_wait_seconds (اولویت با قدم اگر پر باشد). برای پیام «ورود موفق» به بله بعد از OTP: روی قدمٔ مناسب (مثل کلیک تأیید) notify_bale_login_success یا bale_login_success: true (فقط وقتی قبلاً از بله کد گرفته شده ارسال می‌شود). شمارهٔ موبایل در ضبط با تایپ و پیش از کلیک روی دکمه ثبت می‌شود؛ sms_otp را فقط روی فیلد کد پیامک بگذار نه روی فیلد شماره.",
+  "meta": {
+    "id": "96ba9f7c-f975-",
+    "name": "capcha",
+    "saved": "2026-06-30T19:51:24Z"
+  }
+}

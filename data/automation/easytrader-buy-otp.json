@@ -1,0 +1,286 @@
+{
+  "version": 1,
+  "created": "2026-09-07T12:00:00Z",
+  "start_url": "https://m.easytrader.ir/",
+  "entry_url_base": "https://m.easytrader.ir/",
+  "turbo_mode": true,
+  "turbo_refresh": true,
+  "refresh_interval_ms": 80,
+  "keep_open_on_missing": true,
+  "turbo_timeout_s": 600,
+  "pause_between_steps_ms": 0,
+  "pause_between_tasks_ms": 0,
+  "sms_otp_wait_seconds": 600,
+  "show_click_marker": false,
+  "auto_solve_captcha": false,
+  "steps": [
+    {
+      "id": "goto_entry",
+      "type": "goto",
+      "url": "https://m.easytrader.ir/",
+      "entry_url_base": "https://m.easytrader.ir/",
+      "delay_ms": 0,
+      "timeout_ms": 15000
+    },
+    {
+      "id": "fill_username",
+      "type": "fill",
+      "selector": "#user-name",
+      "selectors": [
+        "#user-name",
+        "input[name='Username']",
+        "#primary_form input[name='Username']",
+        "input[name='Username' i]",
+        "input[autocomplete='username']",
+        "input[placeholder*='نام کاربری']",
+        "input[placeholder*='کد ملی']",
+        "input[type='text']"
+      ],
+      "value": "{{username}}",
+      "param": "username",
+      "delay_ms": 0,
+      "timeout_ms": 15000
+    },
+    {
+      "id": "fill_password",
+      "type": "fill",
+      "selector": "#password",
+      "selectors": [
+        "#password",
+        "input[name='Password']",
+        "#primary_form input[name='Password']",
+        "input[type='password']",
+        "input[name='Password' i]",
+        "input[autocomplete='current-password']",
+        "input[placeholder*='رمز عبور']"
+      ],
+      "value": "{{password}}",
+      "param": "password",
+      "delay_ms": 0,
+      "timeout_ms": 15000
+    },
+    {
+      "id": "clk_submit",
+      "type": "click",
+      "selector": "#primary_form button[type='submit']",
+      "selectors": [
+        "#primary_form button[type='submit']",
+        "button[type='submit']:has-text('ورود')",
+        "#primary_form button:has-text('ورود')",
+        "button[type='submit']",
+        "button:has-text('ورود')",
+        "form#primary_form button"
+      ],
+      "delay_ms": 0,
+      "timeout_ms": 15000
+    },
+    {
+      "id": "fill_otp",
+      "type": "fill",
+      "selector": "input[name='Code']",
+      "selectors": [
+        "input[name='Code']",
+        "input[name='VerificationCode']",
+        "input[name='OtpCode']",
+        "input[name='Otp']",
+        "#code",
+        "#otp",
+        "#login-otp",
+        "input[autocomplete='one-time-code']",
+        "input[placeholder*='کد']",
+        "input[placeholder*='تایید']",
+        "input[placeholder*='تأیید']",
+        "input[type='tel']",
+        "input[maxlength='6']",
+        "input[maxlength='5']"
+      ],
+      "value": "",
+      "param": null,
+      "sms_otp": true,
+      "sms_otp_min_digits": 5,
+      "sms_otp_max_digits": 6,
+      "sms_otp_prompt": "کد ورود ایزی‌تریدر مفید (پیامک) را در همین چت بفرستید. فقط عدد کافی است.",
+      "delay_ms": 0,
+      "timeout_ms": 15000
+    },
+    {
+      "id": "clk_otp_submit",
+      "type": "click",
+      "selector": "button[type='submit']:has-text('ورود')",
+      "selectors": [
+        "button[type='submit']:has-text('ورود')",
+        "button[type='submit']:has-text('تایید')",
+        "button[type='submit']:has-text('تأیید')",
+        "button:has-text('تایید')",
+        "button:has-text('تأیید')",
+        "button:has-text('ورود')",
+        "button[type='submit']"
+      ],
+      "delay_ms": 0,
+      "timeout_ms": 15000,
+      "notify_bale_login_success": true
+    },
+    {
+      "id": "goto_panel",
+      "type": "goto",
+      "url": "https://m.easytrader.ir/",
+      "delay_ms": 0,
+      "timeout_ms": 15000
+    },
+    {
+      "id": "clk_search",
+      "type": "click",
+      "selector": "button:has-text('جستجو')",
+      "selectors": [
+        "button:has-text('جستجو')",
+        "[aria-label*='جستجو']",
+        "[title*='جستجو']",
+        "input[placeholder*='جستجو']",
+        "input[placeholder*='نماد']",
+        "[data-testid*='search']",
+        ".search-box",
+        ".search-btn",
+        "button.search",
+        "button:has-text('نماد')",
+        "a[href*='search']"
+      ],
+      "delay_ms": 0
+    },
+    {
+      "id": "fill_stock",
+      "type": "fill",
+      "selector": "input[placeholder*='جستجو']",
+      "selectors": [
+        "input[placeholder*='جستجو']",
+        "input[placeholder*='نماد']",
+        "input[placeholder*='نام یا نماد']",
+        "input[placeholder*='جستجوی نماد']",
+        "input[type='search']",
+        "[data-testid*='search-input']",
+        "[data-testid*='search'] input",
+        ".search-input input",
+        ".search-input",
+        "input[name='search']",
+        "input[name='query']",
+        "input[name='symbol']"
+      ],
+      "value": "{{stock}}",
+      "param": "stock",
+      "delay_ms": 0
+    },
+    {
+      "id": "clk_search_result",
+      "type": "click",
+      "selector": ".search-result-item:first-child",
+      "selectors": [
+        ".search-result-item:first-child",
+        "div[role='listbox'] > div:first-child",
+        "div[role='listbox'] [role='option']:first-child",
+        "[role='option']:first-child",
+        ".search-results li:first-child",
+        ".search-results div:first-child",
+        "[data-testid*='symbol']:first-child",
+        "[data-testid*='search-item']:first-child",
+        "table tbody tr:first-child",
+        ".symbol-row:first-child",
+        ".ag-row-first",
+        ".ag-row:first-child",
+        ".item-row:first-child",
+        "div.symbol-name",
+        ".stock-item:first-child"
+      ],
+      "delay_ms": 0
+    },
+    {
+      "id": "fill_qty",
+      "type": "fill",
+      "selector": "input[placeholder*='تعداد']",
+      "selectors": [
+        "input[placeholder*='تعداد']",
+        "input[placeholder*='حجم']",
+        "input[name*='quantity' i]",
+        "input[name*='volume' i]",
+        "input[name*='count' i]",
+        "[data-testid*='quantity'] input",
+        "[data-testid*='quantity']",
+        "[data-testid*='volume'] input",
+        "[data-testid*='volume']",
+        "input[aria-label*='تعداد']",
+        "input[aria-label*='حجم']",
+        "label:has-text('تعداد') + input",
+        "label:has-text('حجم') + input",
+        "input.order-quantity",
+        "input.quantity-input",
+        "input[type='number']",
+        "input[inputmode='numeric']"
+      ],
+      "value": "{{qty}}",
+      "param": "qty",
+      "delay_ms": 0
+    },
+    {
+      "id": "clk_buy",
+      "type": "click",
+      "selector": "button:has-text('خرید')",
+      "selectors": [
+        "button:has-text('خرید')",
+        "[data-testid*='buy-btn']",
+        "[data-testid*='buy']",
+        "button.btn-buy",
+        "button.buy",
+        "button.buy-button",
+        "[aria-label*='خرید']",
+        "button:has-text('ارسال خرید')",
+        "button:has-text('ثبت خرید')",
+        "button.green-btn",
+        "button.is-buy"
+      ],
+      "delay_ms": 0
+    },
+    {
+      "id": "clk_confirm",
+      "type": "click",
+      "selector": "button:has-text('تایید')",
+      "selectors": [
+        "button:has-text('تایید')",
+        "button:has-text('تأیید')",
+        "button:has-text('ارسال سفارش')",
+        "button:has-text('ثبت نهایی')",
+        "button:has-text('بله')",
+        "button:has-text('ادامه')",
+        "[data-testid*='confirm']",
+        "div[role='dialog'] button:has-text('تایید')",
+        "div[role='dialog'] button:has-text('تأیید')",
+        "div[role='dialog'] button:has-text('خرید')",
+        ".modal button:has-text('تایید')",
+        ".modal button:has-text('تأیید')",
+        ".modal button:has-text('خرید')",
+        "button.btn-confirm"
+      ],
+      "delay_ms": 0
+    }
+  ],
+  "runs": [
+    {
+      "label": "خرید ایزی‌تریدر با پیامک",
+      "values": {
+        "username": "",
+        "password": "",
+        "stock": "",
+        "qty": ""
+      }
+    }
+  ],
+  "default_values": {
+    "username": "",
+    "password": "",
+    "stock": "",
+    "qty": ""
+  },
+  "notes": "سناریوی خرید سریع ایزی‌تریدر (مفید) با تایید دومرحله‌ای پیامکی (SMS OTP) از بله و سلکتورهای فال‌بک. مقادیر username، password، stock و qty را پر کنید.",
+  "meta": {
+    "id": "easytrader-buy-otp",
+    "name": "خرید ایزی‌تریدر (با پیامک دو مرحله‌ای)",
+    "saved": "2026-09-07T12:00:00Z"
+  }
+}

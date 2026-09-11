@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>دستیار جریان کار سایت‌ها</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="hero">
+        <h1>دستیار جریان کار وب</h1>
+        <p class="hero-lead">ضبط، ویرایش و اجرای خودکار سناریوهای مرورگر</p>
+        <div style="margin-top: 14px; display: flex; justify-content: center; gap: 10px;">
+          <a href="/easytrader" style="display: inline-flex; align-items: center; gap: 8px; padding: 9px 18px; background: var(--accent-gradient); color: #ffffff; border-radius: 8px; font-size: 0.9rem; font-weight: 600; text-decoration: none; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3); transition: all 0.2s;">
+            ⚡ پنل اختصاصی خرید سریع ایزی‌تریدر (مفید)
+          </a>
+        </div>
+      </header>
+
+      <div id="toast" style="margin-top: 12px"></div>
+
+      <!-- بخش ۱: بله -->
+      <section class="card" id="card-bale">
+        <h2>۱. اعلان‌ها (بله)</h2>
+        <div class="grid-2">
+          <div class="field">
+            <label for="bale_bot_token">توکن بازو</label>
+            <input id="bale_bot_token" type="password" autocomplete="off" placeholder="123456789:ABC…" />
+          </div>
+          <div class="field">
+            <label for="bale_chat_id">Chat ID</label>
+            <input id="bale_chat_id" type="text" inputmode="numeric" autocomplete="off" placeholder="مثلاً ۱۲۳۴۵۶۷۸۹" />
+          </div>
+        </div>
+        <div class="grid-2 spaced-top">
+          <div class="field">
+            <label for="poll_interval">فاصله چک (ثانیه)</label>
+            <input id="poll_interval" type="number" min="15" value="60" />
+          </div>
+          <div class="field" style="justify-content: flex-start">
+            <label class="toggle spaced-toggle">
+              <input id="monitoring_enabled" type="checkbox" />
+              <span>مانیتورینگ فعال</span>
+            </label>
+          </div>
+        </div>
+        <div class="row spaced-top">
+          <button type="button" id="btn_test_bale" class="primary small">ارسال پیام آزمایشی</button>
+        </div>
+      </section>
+
+      <!-- بخش ۲: صف -->
+      <section class="card" id="card-queue">
+        <h2>۲. صف اجرا</h2>
+        <div id="queue_list" class="queue-list"></div>
+        <p id="queue_empty" class="muted-small">صف خالی است.</p>
+        <div class="grid-2 spaced-top">
+          <div class="field">
+            <label for="queue_pick_script">سناریو</label>
+            <select id="queue_pick_script"></select>
+          </div>
+          <div class="field">
+            <label for="queue_item_start_url">آدرس شروع (اختیاری)</label>
+            <input id="queue_item_start_url" type="text" placeholder="خالی → از سناریو" />
+          </div>
+        </div>
+        <div class="row muted-row">
+          <button type="button" id="btn_queue_add" class="primary small">افزودن به صف</button>
+          <button type="button" id="btn_queue_clear" class="danger small">خالی کردن صف</button>
+          <button type="button" id="btn_import" class="small">وارد کردن JSON</button>
+          <button type="button" id="btn_export" class="small">خروجی JSON</button>
+        </div>
+        <div class="grid-2 spaced-top">
+          <div class="field">
+            <label for="queue_pause_scenarios_sec">مکث بین سناریوها (ثانیه)</label>
+            <input id="queue_pause_scenarios_sec" type="number" min="0" max="120" step="0.5" value="2.5" />
+          </div>
+          <div class="field" style="justify-content: flex-end">
+            <label class="inline-check">
+              <input type="checkbox" id="queue_stop_on_error" checked />
+              توقف با اولین خطا
+            </label>
+          </div>
+        </div>
+        <div class="row spaced-top">
+          <button type="button" id="btn_queue_run" class="primary">اجرای صف</button>
+          <button type="button" id="btn_queue_abort" class="danger small" disabled>توقف صف</button>
+        </div>
+        <pre id="queue_log" class="log-box" style="min-height: 6rem; margin-top: 12px">لاگ صف اینجا می‌آید...</pre>
+      </section>
+
+      <!-- بخش ۳: ضبط و اجرا -->
+      <section class="card" id="card-automation">
+        <h2>۳. ضبط و اجرا</h2>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="auto_url">آدرس شروع ضبط</label>
+            <input id="auto_url" type="text" placeholder="https://example.com" />
+          </div>
+          <div class="field">
+            <label>کنترل ضبط</label>
+            <div class="row">
+              <button type="button" id="btn_auto_open" class="primary small">باز کردن مرورگر</button>
+              <button type="button" id="btn_auto_rec_start" class="small">شروع ضبط</button>
+              <button type="button" id="btn_auto_rec_stop" class="small">توقف ضبط</button>
+              <button type="button" id="btn_auto_build" class="small">ساخت سناریو</button>
+              <button type="button" id="btn_auto_close" class="danger small">بستن مرورگر</button>
+            </div>
+            <p class="muted-small">وضعیت: <span id="auto_status">غیرفعال</span></p>
+          </div>
+        </div>
+
+        <div class="field spaced-top">
+          <label for="auto_scenario">JSON سناریو</label>
+          <textarea id="auto_scenario" class="json-box" placeholder='{"steps":[...],"runs":[]}'></textarea>
+        </div>
+
+        <div class="grid-2 spaced-top">
+          <div class="field">
+            <label for="auto_script_id">شناسه سناریو</label>
+            <input id="auto_script_id" type="text" placeholder="خالی = ساخت شناسه جدید" />
+          </div>
+          <div class="field">
+            <label for="auto_script_name">نام سناریو</label>
+            <input id="auto_script_name" type="text" placeholder="مثلاً ثبت نقاط نوبت صبح" />
+          </div>
+        </div>
+
+        <div class="row spaced-top">
+          <button type="button" id="btn_auto_save" class="small">ذخیره سناریو</button>
+          <button type="button" id="btn_auto_load" class="small">بارگذاری</button>
+          <button type="button" id="btn_auto_delete" class="danger small">حذف</button>
+          <select id="auto_scripts_list"></select>
+        </div>
+
+        <div class="field spaced-top">
+          <label for="auto_runs">تسک‌ها (JSON آرایه)</label>
+          <textarea id="auto_runs" class="json-box" placeholder='[{"label":"تسک ۱","values":{"amount":"2"}}]'></textarea>
+        </div>
+
+        <div class="grid-2 spaced-top">
+          <div class="field">
+            <label for="auto_playback_url">آدرس ورود هنگام اجرا</label>
+            <input id="auto_playback_url" type="text" placeholder="خالی → از start_url سناریو" />
+          </div>
+          <div class="field">
+            <label for="auto_pause_steps_sec">مکث بین قدم‌ها (ثانیه - ۰ برای بیشترین سرعت)</label>
+            <input id="auto_pause_steps_sec" type="number" min="0" max="120" step="0.1" value="0" />
+          </div>
+        </div>
+
+        <div class="grid-2 spaced-top">
+          <div class="field">
+            <label for="auto_refresh_ms">فاصله رفرش (میلی‌ثانیه)</label>
+            <input id="auto_refresh_ms" type="number" min="20" max="2000" step="10" value="80" />
+          </div>
+          <div class="field" style="display: flex; flex-direction: column; justify-content: center; gap: 10px; padding-top: 4px;">
+            <label class="inline-check">
+              <input type="checkbox" id="auto_turbo_mode" />
+              حالت توربو (حداکثر سرعت)
+            </label>
+            <label class="inline-check">
+              <input type="checkbox" id="auto_keep_open" checked />
+              باز نگه داشتن مرورگر در صورت عدم وجود المان
+            </label>
+          </div>
+        </div>
+
+        <div class="field spaced-top">
+          <label for="auto_health_refresh_sec">رفرش بررسی اتصال (ثانیه؛ ۰ = خاموش)</label>
+          <div class="row" style="flex-wrap: wrap; align-items: center; gap: 0.5rem">
+            <input id="auto_health_refresh_sec" type="number" min="0" max="3600" step="1" value="30" style="max-width: 8rem" />
+            <button type="button" id="btn_health_refresh_30" class="small">۳۰ ثانیه</button>
+            <button type="button" id="btn_health_refresh_60" class="small">۶۰ ثانیه</button>
+            <button type="button" id="btn_health_refresh_off" class="small">خاموش</button>
+          </div>
+        </div>
+
+        <div class="field spaced-top muted-row">
+          <label class="inline-check" id="e41" style="cursor:pointer">
+            <input type="checkbox" id="auto_show_marker" checked />
+            نشانگر بصری روی کلیک‌ها
+          </label>
+        </div>
+
+        <div class="field spaced-top muted-row">
+          <label class="inline-check">
+            <input type="checkbox" id="auto_notify_bale" checked />
+            اعلان بله بعد از اجرا
+          </label>
+        </div>
+
+        <div class="row spaced-top">
+          <button type="button" id="btn_auto_run" class="primary">اجرای سناریو</button>
+          <button type="button" id="btn_auto_abort" class="danger small" disabled>توقف اجرا</button>
+        </div>
+
+        <pre id="auto_log" class="log-box">لاگ اجرا اینجا می‌آید...</pre>
+      </section>
+    </div>
+
+    <footer class="sticky-save">
+      <div class="footer-inner">
+        <div class="footer-btns">
+          <button type="button" id="btn_save" class="primary">ذخیره روی دیسک</button>
+          <button type="button" id="btn_reload" class="small">بازخوانی از دیسک</button>
+        </div>
+      </div>
+    </footer>
+
+    <input type="file" id="import_file" accept="application/json" hidden />
+    <script src="/static/app.js?v=20260906-turbo1"></script>
+  </body>
+</html>

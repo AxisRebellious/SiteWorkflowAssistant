@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>خرید سریع ایزی‌تریدر (مفید)</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <style>
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+      .badge-turbo {
+        background: rgba(34, 197, 94, 0.15);
+        color: #4ade80;
+        border: 1px solid rgba(34, 197, 94, 0.3);
+      }
+      .badge-dry {
+        background: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.3);
+      }
+      .status-pill {
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-weight: 600;
+      }
+      .status-pending { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
+      .status-running { background: rgba(59, 130, 246, 0.2); color: #60a5fa; animation: pulse 1.5s infinite; }
+      .status-success { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+      .status-error { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+      .status-cancelled { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+      .nav-back {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        margin-bottom: 12px;
+        padding: 6px 12px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border);
+      }
+      .nav-back:hover {
+        color: var(--text-main);
+        border-color: var(--border-hover);
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <a href="/" class="nav-back">← بازگشت به صفحه اصلی دستیار</a>
+
+      <header class="hero">
+        <h1>خرید سریع ایزی‌تریدر (مفید)</h1>
+        <p class="hero-lead">اجرای هوشمند و سرخطی سفارش‌های خرید PWA ایزی‌تریدر با حالت آزمایشی (Dry-Run) و صف نوبتی</p>
+      </header>
+
+      <div id="toast" style="margin-top: 12px"></div>
+
+      <!-- کارت ۱: حساب کاربری و تنظیمات -->
+      <section class="card" id="card-et-auth">
+        <h2>
+          <span>۱. حساب کاربری و حالت اجرا</span>
+          <span class="badge badge-turbo" style="margin-right: auto;">⚡ حالت توربو ثابت (حداکثر سرعت)</span>
+        </h2>
+        <div class="grid-2">
+          <div class="field">
+            <label for="et_username">نام کاربری / کد ملی</label>
+            <input id="et_username" type="text" autocomplete="username" placeholder="مثلاً 0012345678" />
+          </div>
+          <div class="field">
+            <label for="et_password">رمز عبور</label>
+            <input id="et_password" type="password" autocomplete="current-password" placeholder="کلمه عبور ورود به ایزی‌تریدر" />
+          </div>
+        </div>
+
+        <div class="spaced-top muted-row">
+          <label class="inline-check" style="cursor: pointer;">
+            <input type="checkbox" id="et_dry_run" checked />
+            <span>
+              <strong>حالت آزمایشی (Dry-Run):</strong>
+              تا مرحله جستجو، انتخاب نماد، پر کردن حجم و کلیک سقف قیمت اجرا می‌شود؛ پنجره مرورگر برای بررسی باز می‌ماند و دکمه نهایی ارسال زده نمی‌شود.
+            </span>
+          </label>
+          <p class="muted-small" style="margin-top: 8px;">
+            🔒 امنیت: نام کاربری و کلمه عبور فقط در نشست همان لحظه پردازش می‌شوند و هیچ‌کجا روی دیسک ذخیره نمی‌شوند.
+          </p>
+        </div>
+      </section>
+
+      <!-- کارت ۲: مشخصات سفارش و اجرای تک‌بار -->
+      <section class="card" id="card-et-order">
+        <h2>۲. مشخصات سفارش و ثبت فوری</h2>
+        <div class="grid-2">
+          <div class="field">
+            <label for="et_stock">نام نماد سهام</label>
+            <input id="et_stock" type="text" placeholder="مثلاً فولاد، خودرو، فملی، شستا..." />
+          </div>
+          <div class="field">
+            <label for="et_qty">تعداد / حجم خرید</label>
+            <input id="et_qty" type="number" min="1" step="1" placeholder="مثلاً ۱۰۰۰" />
+          </div>
+        </div>
+
+        <div class="grid-2 spaced-top">
+          <div class="field">
+            <label for="et_retry_max">تلاش تا ثبت نهایی (خرید واقعی)</label>
+            <input id="et_retry_max" type="number" min="1" max="2000" step="1" value="900" />
+            <span class="muted-small">اگر سامانه «خارج از ساعت معاملات» بگوید، بات همین‌قدر بار تلاش می‌کند تا سفارش ثبت شود. با فاصله زیر.</span>
+          </div>
+          <div class="field">
+            <label for="et_retry_wait">فاصله بین تلاش‌ها (ثانیه)</label>
+            <input id="et_retry_wait" type="number" min="5" max="300" step="1" value="45" />
+            <span class="muted-small">۹۰۰ تلاش × ۴۵ ثانیه ≈ ۱۱ ساعت پوشش شب تا صبح. توقف با «توقف».</span>
+          </div>
+        </div>
+
+        <div class="grid-2 spaced-top">
+          <div class="field">
+            <label>حالت قیمت</label>
+            <label class="inline-check" style="cursor: pointer;">
+              <input type="radio" name="et_price_mode" value="max" checked />
+              <span><strong>سقف قیمت</strong> (پیش‌فرض — سریع‌ترین خرید)</span>
+            </label>
+            <label class="inline-check" style="cursor: pointer; margin-top: 6px;">
+              <input type="radio" name="et_price_mode" value="custom" />
+              <span><strong>قیمت دلخواه</strong></span>
+            </label>
+            <input id="et_price" type="number" min="1" step="1" placeholder="مثلاً ۴۲۸۰" disabled style="margin-top: 6px;" />
+            <span class="muted-small">در حالت سقف، سامانه روی فلش سقف قیمت می‌زند؛ در حالت دلخواه، همان قیمت شما درج می‌شود.</span>
+          </div>
+          <div class="field" style="justify-content: center;">
+            <label>وضعیت عملیات جاری</label>
+            <div id="et_single_status" style="font-weight: 500; font-size: 0.95rem; color: var(--text-muted);">آماده</div>
+          </div>
+        </div>
+
+        <div class="row spaced-top">
+          <button type="button" id="btn_buy_single" class="primary">⚡ اجرای خرید</button>
+          <button type="button" id="btn_stop_single" class="danger small" disabled>⏹️ توقف</button>
+          <button type="button" id="btn_add_to_queue" class="small" style="margin-right: auto;">➕ افزودن به صف خرید</button>
+        </div>
+      </section>
+
+      <!-- کارت ۳: صف خریدهای نوبتی -->
+      <section class="card" id="card-et-queue">
+        <h2>
+          <span>۳. صف خریدهای نوبتی</span>
+          <span id="queue_count_badge" class="badge" style="background: rgba(255,255,255,0.05); margin-right: auto;">۰ سفارش در صف</span>
+        </h2>
+        
+        <div id="et_queue_list" class="queue-list spaced-top"></div>
+        <p id="et_queue_empty" class="muted-small">صف خرید خالی است. نماد و تعداد را در کارت بالا پر کرده و «افزودن به صف خرید» را بزنید.</p>
+
+        <div class="row muted-row spaced-top">
+          <button type="button" id="btn_queue_run" class="primary">▶️ اجرای صف نوبتی</button>
+          <button type="button" id="btn_queue_stop" class="danger small" disabled>⏹️ توقف صف</button>
+          <button type="button" id="btn_queue_clear" class="danger small" style="margin-right: auto;">🗑️ خالی کردن صف</button>
+        </div>
+        <p class="muted-small">سفارش‌های صف با استفاده از مشخصات کاربری کارت ۱ به ترتیب و پشت‌سرهم با اعتبارسنجی ارسال می‌شوند.</p>
+      </section>
+
+      <!-- گزارش لحظه‌ای لاگ -->
+      <section class="card" id="card-et-logs">
+        <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+          <h2 style="margin: 0;">۴. گزارش زنده و لاگ اجرای اتوماسیون</h2>
+          <button type="button" id="btn_clear_log" class="small" style="padding: 4px 10px; font-size: 0.8rem;">پاک کردن لاگ</button>
+        </div>
+        <pre id="et_log" class="log-box" style="min-height: 140px; max-height: 380px;">منتظر آغاز عملیات...</pre>
+      </section>
+    </div>
+
+    <script src="/static/easytrader.js?v=20260910-1"></script>
+  </body>
+</html>

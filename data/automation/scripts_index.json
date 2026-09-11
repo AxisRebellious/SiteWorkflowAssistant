@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "id": "easytrader-buy",
+      "name": "خرید ایزی‌تریدر (عادی)"
+    },
+    {
+      "id": "easytrader-buy-otp",
+      "name": "خرید ایزی‌تریدر (با پیامک دو مرحله‌ای)"
+    },
+    {
+      "id": "mtcaptcha-test",
+      "name": "mtcaptcha-test"
+    },
+    {
+      "id": "OTP Test",
+      "name": "OTP Test"
+    },
+    {
+      "id": "96ba9f7c-f975-",
+      "name": "capcha"
+    },
+    {
+      "id": "capcha",
+      "name": "capcha"
+    }
+  ]
+}

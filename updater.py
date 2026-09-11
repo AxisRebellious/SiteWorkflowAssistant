@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import http.client
 import json
 import os
 from pathlib import Path
@@ -43,8 +44,9 @@ DEFAULT_CONFIG: dict[str, str] = {
     "asset_name": "",
 }
 
-# حداقل حجم مجاز فایل زیپ به‌روزرسانی برای جلوگیری از دانلود ناقص یا فایل خالی (۱ مگابایت)
-MIN_UPDATE_ZIP_SIZE: int = 1 * 1024 * 1024
+# حداقل حجم مجاز فایل زیپ به‌روزرسانی (۵۰ کیلوبایت؛ بسته‌های فقط-کد واقعی حدود ۰.۱ مگابایت‌اند).
+# فایل‌های کوچک‌تر (صفحات خطا) رد می‌شوند؛ ناقص‌بودن با بررسی سلامت زیپ هم گرفته می‌شود.
+MIN_UPDATE_ZIP_SIZE: int = 50 * 1024
 
 # لیست مسیرهایی که هرگز نباید رونویسی شوند تا فعال‌سازی و داده‌های کاربر دست‌نخورده بماند
 EXCLUDED_PATHS: set[str] = {
@@ -160,13 +162,158 @@ def _is_version_newer(latest: str, current: str) -> bool:
         return latest != current
 
 
+def _doh_resolve_ips(host: str) -> list[str]:
+    """رزولو هاست از طریق DNS رمزنگاری‌شده (برای شبکه‌هایی که DNS محلی را دست‌کاری می‌کنند)."""
+    import urllib.parse
+
+    ips: list[str] = []
+    queries = [
+        "https://dns.google/resolve?name=" + urllib.parse.quote(host) + "&type=A",
+        "https://cloudflare-dns.com/dns-query?name=" + urllib.parse.quote(host) + "&type=A",
+    ]
+    for q in queries:
+        try:
+            req = urllib.request.Request(
+                q,
+                headers={"accept": "application/dns-json", "User-Agent": "SiteWorkflowAssistant-Updater/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            for ans in data.get("Answer") or []:
+                if ans.get("type") == 1 and ans.get("data"):
+                    ip = str(ans["data"]).strip()
+                    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip) and ip not in ips:
+                        ips.append(ip)
+            if ips:
+                return ips
+        except Exception:
+            continue
+    return ips
+
+
+class _SniPinnedHTTPSConnection(http.client.HTTPSConnection):
+    """اتصال HTTPS به IP ازپیش‌رزولوشده با حفظ hostname برای SNI و اعتبارسنجی گواهی."""
+
+    def connect(self) -> None:
+        import socket as _socket
+
+        pin_ip = getattr(self, "_pin_ip", None)
+        dest = (pin_ip, self.port) if pin_ip else (self.host, self.port)
+        self.sock = _socket.create_connection(dest, self.timeout, self.source_address)
+        if self._tunnel_host:
+            self._tunnel()
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+
+
+def _resilient_urlopen(url_or_req: Any, timeout: int = 15) -> Any:
+    """urlopen با fallback خودکار روی DoH. خروجی مثل پاسخ urlopen (کانتکست‌منجر + read/headers)."""
+    import http.client
+    import urllib.parse
+
+    try:
+        return urllib.request.urlopen(url_or_req, timeout=timeout)
+    except Exception as first_exc:
+        url = url_or_req.full_url if hasattr(url_or_req, "full_url") else str(url_or_req)
+        try:
+            host = urllib.parse.urlsplit(url).hostname or ""
+        except Exception:
+            raise first_exc
+        if not host:
+            raise first_exc
+        ips = _doh_resolve_ips(host)
+        if not ips:
+            raise first_exc
+        last_exc: Exception = first_exc
+        for _attempt in range(6):
+            try:
+                return _pinned_open(url_or_req, url, ips, timeout)
+            except Exception as exc:
+                last_exc = exc
+                continue
+        raise last_exc
+
+
+def _pinned_open(url_or_req: Any, url: str, ips: list[str], timeout: int) -> Any:
+    """باز کردن URL با اتصال مستقیم به یکی از IPها + دنبال‌کردن دستی ریدایرکت (تا ۵ پرش)."""
+    import http.client
+    import urllib.parse
+
+    if hasattr(url_or_req, "header_items"):
+        method = url_or_req.get_method()
+        data = url_or_req.data
+        headers = dict(url_or_req.header_items())
+        if "User-agent" not in headers and "User-Agent" not in headers:
+            headers["User-Agent"] = "SiteWorkflowAssistant-Updater/1.0"
+    else:
+        method, data, headers = "GET", None, {"User-Agent": "SiteWorkflowAssistant-Updater/1.0"}
+
+    cur_url = url
+    last_exc: Exception | None = None
+    for _hop in range(6):
+        parts = urllib.parse.urlsplit(cur_url)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        ok = False
+        for ip in ips:
+            try:
+                if parts.scheme == "https":
+                    conn: Any = _SniPinnedHTTPSConnection(parts.hostname or "", port, timeout=timeout)
+                    conn._pin_ip = ip
+                else:
+                    conn = http.client.HTTPConnection(ip, port, timeout=timeout)
+                conn.request(method, path, body=data, headers=headers)
+                resp = conn.getresponse()
+                if resp.status in (301, 302, 303, 307, 308):
+                    loc = resp.getheader("Location") or ""
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    if not loc:
+                        raise RuntimeError(f"ریدایرکت بدون مقصد ({resp.status})")
+                    cur_url = urllib.parse.urljoin(cur_url, loc)
+                    if resp.status == 303:
+                        method, data = "GET", None
+                    ok = True
+                    break
+                if resp.status >= 400:
+                    body = ""
+                    try:
+                        body = resp.read(500).decode("utf-8", errors="replace")
+                    except Exception:
+                        pass
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    raise RuntimeError(f"خطای HTTP {resp.status}: {body[:200]}")
+                return resp
+            except Exception as exc:
+                last_exc = exc
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                continue
+        if ok:
+            continue
+        break
+    raise last_exc if last_exc else RuntimeError("اتصال به سرور ممکن نشد.")
+
+
 def _default_http_get(url: str) -> bytes:
     """دریافت داده‌های وب از طریق کتابخانه استاندارد urllib با مهلت ۱۵ ثانیه."""
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "SiteWorkflowAssistant-Updater/1.0"},
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with _resilient_urlopen(req, timeout=15) as resp:
         return resp.read()
 
 
@@ -285,7 +432,7 @@ def download_update(
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp, open(part_file, "wb") as out_f:
+        with _resilient_urlopen(req, timeout=120) as resp, open(part_file, "wb") as out_f:
             total_hdr = resp.headers.get("Content-Length")
             total_bytes = int(total_hdr) if total_hdr and total_hdr.isdigit() else None
             downloaded = 0
@@ -857,11 +1004,11 @@ def run_self_test(current_root: Path) -> bool:
 
         dest_test_zip = sandbox / "data" / "test_download.zip"
         try:
-            download_update(small_zip.resolve().as_uri(), dest_test_zip)
-            assert False, "گارد حداقل حجم مجاز ۱ مگابایت عمل نکرد!"
+            download_update(small_zip.resolve().as_uri(), dest_test_zip, min_size=1024 * 1024)
+            assert False, "گارد حداقل حجم مجاز عمل نکرد!"
         except RuntimeError as exc:
             assert "کمتر از حداقل مجاز" in str(exc)
-            print("  ✓ تست گارد حجم مجاز (رد فایل کمتر از ۱ مگابایت) با موفقیت گذشت.")
+            print("  ✓ تست گارد حجم مجاز (رد فایل کمتر از حد) با موفقیت گذشت.")
 
         # دانلود فایل واقعی با پیشرفت
         progress_calls: list[tuple[int, int | None]] = []

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>فرم تست سفارش ایزی‌تریدر - /order-form/</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #121820; color: #fff; }
+        .box { max-width: 400px; margin: auto; padding: 20px; border: 1px solid #334155; border-radius: 8px; }
+        input { width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; background: #1e293b; color: #fff; border: 1px solid #475569; }
+        .btn-max { background: #0284c7; color: white; padding: 6px 12px; cursor: pointer; display: inline-block; margin: 6px 0; border-radius: 4px; }
+        .btn-submit { width: 100%; background: #16a34a; color: white; padding: 12px; font-size: 16px; border: none; cursor: pointer; border-radius: 4px; }
+        #status-box { margin-top: 15px; padding: 12px; border-radius: 4px; font-weight: bold; min-height: 40px; background: #1e293b; border: 1px solid #475569; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h3>فرم ارسال سفارش نماد فولاد</h3>
+        <label>حجم سفارش:</label>
+        <input data-cy="order-form-input-quantity" id="quantity" type="text" value="100" />
+        
+        <label>قیمت:</label>
+        <div data-cy="order-form-max-price" id="max-price" class="btn-max" onclick="setMaxPrice()">سقف قیمت</div>
+        <input data-cy="order-form-input-price" id="price" type="text" value="" />
+        
+        <button data-cy="oms-order-form-submit-button-buy" id="btn-submit" class="btn-submit" onclick="handleSubmit()">ارسال خرید</button>
+        
+        <div id="status-box">در انتظار ارسال</div>
+    </div>
+
+    <script>
+        let submitAttempts = 0;
+        function setMaxPrice() {
+            document.getElementById('price').value = '15400';
+        }
+        function handleSubmit() {
+            submitAttempts++;
+            const box = document.getElementById('status-box');
+            const now = new Date().toISOString();
+            if (submitAttempts === 1) {
+                // First attempt returns out of trading hours
+                box.innerText = "خطای سامانه: ارسال سفارش خارج از ساعت معاملات است. (" + now + ")";
+                box.style.color = "#f87171";
+            } else {
+                // Second attempt returns success
+                box.innerText = "سفارش شما با موفقیت در سامانه ثبت شد (تلاش " + submitAttempts + " در " + now + ")";
+                box.style.color = "#4ade80";
+            }
+        }
+    </script>
+</body>
+</html>

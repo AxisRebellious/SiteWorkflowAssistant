@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>شبیه‌ساز ایزی‌تریدر - Mock EasyTrader</title>
+    <style>
+        body { font-family: Tahoma, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 0; }
+        .nav { background: #1e293b; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
+        .nav a { color: #38bdf8; text-decoration: none; font-weight: bold; margin: 0 10px; cursor: pointer; }
+        .container { max-width: 500px; margin: 30px auto; background: #1e293b; padding: 24px; border-radius: 8px; border: 1px solid #334155; }
+        input { width: 100%; padding: 10px; margin: 8px 0; box-sizing: border-box; background: #0f172a; color: #fff; border: 1px solid #475569; border-radius: 4px; }
+        button { cursor: pointer; padding: 10px 16px; border-radius: 4px; border: none; font-weight: bold; }
+        .btn-primary { background: #0284c7; color: white; width: 100%; }
+        .btn-success { background: #16a34a; color: white; width: 100%; font-size: 16px; margin-top: 10px; }
+        .btn-max { background: #3b82f6; color: white; display: inline-block; padding: 6px 12px; margin: 6px 0; border-radius: 4px; cursor: pointer; }
+        .item-card { background: #0f172a; padding: 12px; margin: 10px 0; border-radius: 6px; border: 1px solid #334155; }
+        .item-card a { color: #4ade80; text-decoration: none; font-weight: bold; display: block; }
+        .status { margin-top: 15px; padding: 12px; border-radius: 6px; background: #0f172a; border: 1px solid #334155; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div id="navbar" class="nav">
+        <div><strong>سامانه معاملاتی ایزی‌تریدر (موک)</strong></div>
+        <div>
+            <a data-cy="main-navbar-search" id="nav-search-btn" href="#/search" onclick="routeTo('#/search')">🔍 جستجو</a>
+        </div>
+    </div>
+
+
+    <!-- Login View -->
+    <div id="view-login" class="container">
+        <h2>ورود به سامانه مفید</h2>
+        <form id="primary_form" onsubmit="handleLoginSubmit(event)">
+            <label>نام کاربری:</label>
+            <input type="text" id="user-name" name="Username" value="user_test" />
+            <label>رمز عبور:</label>
+            <input type="password" id="password" name="Password" value="pass_test" />
+            <button type="submit" class="btn-primary" style="margin-top: 12px;">ورود</button>
+        </form>
+    </div>
+
+    <!-- Search View -->
+    <div id="view-search" class="container hidden">
+        <h3>جستجوی نماد</h3>
+        <p style="color: #94a3b8; font-size: 12px;">صنایع منتخب بازار بورس</p>
+        <input type="text" data-cy="layout-search-input" id="search-input" placeholder="جستجوی نماد..." oninput="filterStocks(this.value)" />
+        <div data-cy="search-panel-result-list" id="search-results">
+            <!-- Dynamic stock items rendered here -->
+        </div>
+    </div>
+
+    <!-- Stock Details View -->
+    <div id="view-details" class="container hidden">
+        <h3 id="details-title">مشخصات نماد</h3>
+        <p>آخرین قیمت: ۱۵,۴۰۰ ریال | تغییر: +۴.۹٪</p>
+        <button data-cy="order-form-buy-btn" class="btn-success" onclick="goToOrderForm()">خرید</button>
+    </div>
+
+    <!-- Order Form View -->
+    <div id="view-order" class="container hidden">
+        <h3 id="order-title">فرم ارسال سفارش خرید</h3>
+        <label>حجم (تعداد):</label>
+        <input type="text" data-cy="order-form-input-quantity" id="order-quantity" value="" />
+        
+        <label>قیمت:</label>
+        <div data-cy="order-form-max-price" id="order-max-price" class="btn-max" onclick="setMaxPrice()">سقف قیمت</div>
+        <input type="text" data-cy="order-form-input-price" id="order-price" value="" />
+
+        <button data-cy="oms-order-form-submit-button-buy" class="btn-success" onclick="handleOrderSubmit()">ارسال خرید</button>
+        <div id="order-status" class="status">آماده ثبت</div>
+    </div>
+
+    <script>
+        let currentStock = "فولاد";
+
+        function showView(viewId) {
+            ['view-login', 'view-search', 'view-details', 'view-order'].forEach(id => {
+                document.getElementById(id).classList.add('hidden');
+            });
+            document.getElementById(viewId).classList.remove('hidden');
+            
+            const nav = document.getElementById('navbar');
+            if (viewId === 'view-login') {
+                nav.classList.add('hidden');
+            } else {
+                nav.classList.remove('hidden');
+            }
+        }
+
+        function routeTo(hash) {
+            window.location.hash = hash;
+            renderRoute();
+        }
+
+        function renderRoute() {
+            const h = window.location.hash || '';
+            const q = window.location.search || '';
+            const cur = (q + ' ' + h);
+            if (cur.includes('/order-form/') || cur.includes('order-form')) {
+                const parts = h.split('/order-form/');
+                if (parts[1]) currentStock = decodeURIComponent(parts[1]);
+                document.getElementById('order-title').innerText = "فرم سفارش خرید " + currentStock;
+                document.getElementById('order-status').innerText = "آماده ثبت";
+                showView('view-order');
+            } else if (cur.includes('/stock-details/') || cur.includes('stock-details')) {
+                const parts = h.split('/stock-details/');
+                if (parts[1]) currentStock = decodeURIComponent(parts[1]);
+                document.getElementById('details-title').innerText = "مشخصات نماد " + currentStock;
+                showView('view-details');
+            } else if (cur.includes('/search') || cur.includes('search')) {
+                showView('view-search');
+                filterStocks(document.getElementById('search-input').value || '');
+            } else if (cur.includes('/market') || cur.includes('market')) {
+                showView('view-search');
+                filterStocks('');
+            } else {
+                showView('view-login');
+            }
+        }
+
+        function handleLoginSubmit(e) {
+            if (e) e.preventDefault();
+            window.history.replaceState(null, '', window.location.pathname + '#/search');
+            routeTo('#/search');
+        }
+
+        function filterStocks(query) {
+            const list = document.getElementById('search-results');
+            list.innerHTML = '';
+            const allStocks = ['فولاد', 'شستا', 'خودرو', 'خساپا', 'شتران', 'فملی'];
+            const q = (query || '').trim();
+            const matched = q ? allStocks.filter(s => s.includes(q)) : allStocks;
+            
+            matched.forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'item-card';
+                div.setAttribute('data-cy', 'search-panel-item-' + s);
+                div.innerHTML = `<a href="#/stock-details/${s}" onclick="routeTo('#/stock-details/${s}')">نماد ${s} (خرید آنلاین)</a>`;
+                list.appendChild(div);
+            });
+        }
+
+        function goToOrderForm() {
+            routeTo('#/order-form/' + encodeURIComponent(currentStock));
+        }
+
+        function setMaxPrice() {
+            document.getElementById('order-price').value = '15400';
+        }
+
+        function handleOrderSubmit() {
+            const statusBox = document.getElementById('order-status');
+            const now = new Date().toISOString();
+            statusBox.innerText = "سفارش شما با موفقیت در سامانه ثبت شد (" + currentStock + " در " + now + ")";
+            statusBox.style.color = "#4ade80";
+        }
+
+        window.addEventListener('hashchange', renderRoute);
+        window.addEventListener('DOMContentLoaded', renderRoute);
+        renderRoute();
+    </script>
+</body>
+</html>

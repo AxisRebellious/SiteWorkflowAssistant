@@ -768,6 +768,7 @@ class EasyTraderBuyBody(BaseModel):
     price_value: str = ""
     target_time: str = ""
     target_epoch: float | None = None
+    base_url: str | None = None
 
 
 def parse_target_epoch(target_time: str = "", target_epoch: float | None = None) -> float | None:
@@ -817,19 +818,28 @@ def compose_easytrader_scenario(
     price_mode: str = "max",
     price_value: str = "",
     target_epoch: float | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     """ساخت خودکار سناریوی خرید در ایزی‌تریدر (مفید) همراه با فال‌بک سلکتورها و مدیریت پاپ‌آپ و خرید آزمایشی."""
     qty_str = str(qty).strip()
     stock_str = stock.strip()
+
+    is_custom = bool(base_url and "m.easytrader.ir" not in base_url)
+    clean_base = (base_url or "").rstrip("/")
+    entry_url = f"{clean_base}#login" if is_custom else "https://m.easytrader.ir/"
+    entry_skip = clean_base.split("/")[-1].split("?")[0].split("#")[0] if is_custom else "m.easytrader.ir"
+    login_sub = "login" if is_custom else "login.emofid.com"
+    verify_sub = clean_base.split("/")[-1].split("?")[0].split("#")[0] if is_custom else "m.easytrader.ir"
+    search_url = f"{clean_base}#/search" if is_custom else "https://m.easytrader.ir/search"
 
     steps: list[dict[str, Any]] = [
         # ۱. ورود به نشانی PWA ایزی‌تریدر
         {
             "id": "goto_easytrader",
             "type": "goto",
-            "url": "https://m.easytrader.ir/",
-            "entry_url_base": "https://m.easytrader.ir/",
-            "skip_if_url_contains": "m.easytrader.ir",
+            "url": entry_url,
+            "entry_url_base": entry_url,
+            "skip_if_url_contains": entry_skip,
             "delay_ms": 0,
             "timeout_ms": 30000,
         },
@@ -837,7 +847,7 @@ def compose_easytrader_scenario(
         {
             "id": "fill_username",
             "type": "fill",
-            "only_if_url_contains": "login.emofid.com",
+            "only_if_url_contains": login_sub,
             "selector": "#user-name",
             "selectors": [
                 "#user-name",
@@ -855,7 +865,7 @@ def compose_easytrader_scenario(
         {
             "id": "fill_password",
             "type": "fill",
-            "only_if_url_contains": "login.emofid.com",
+            "only_if_url_contains": login_sub,
             "selector": "#password",
             "selectors": [
                 "#password",
@@ -873,7 +883,7 @@ def compose_easytrader_scenario(
         {
             "id": "clk_login_submit",
             "type": "click",
-            "only_if_url_contains": "login.emofid.com",
+            "only_if_url_contains": login_sub,
             "selector": "#primary_form button[type='submit']",
             "selectors": [
                 "#primary_form button[type='submit']",
@@ -889,8 +899,8 @@ def compose_easytrader_scenario(
         {
             "id": "verify_login",
             "type": "expect_url",
-            "only_if_url_contains": "login.emofid.com",
-            "contains": "m.easytrader.ir",
+            "only_if_url_contains": login_sub,
+            "contains": verify_sub,
             "not_contains": "login.emofid.com/Login,auth-callback",
             "label": "تأیید ورود به پنل",
             "timeout_ms": 40000,
@@ -994,7 +1004,7 @@ def compose_easytrader_scenario(
         {
             "id": "reload_search_clean",
             "type": "goto",
-            "url": "https://m.easytrader.ir/search",
+            "url": search_url,
             "delay_ms": 0,
             "timeout_ms": 30000,
         },
@@ -1278,8 +1288,8 @@ def compose_easytrader_scenario(
 
     scenario: dict[str, Any] = {
         "version": 1,
-        "start_url": "https://m.easytrader.ir/",
-        "entry_url_base": "https://m.easytrader.ir/",
+        "start_url": entry_url,
+        "entry_url_base": entry_url,
         "turbo_mode": turbo_mode,
         "turbo_refresh": False,
         "reuse_browser": True,
@@ -1357,6 +1367,7 @@ async def easytrader_buy(body: EasyTraderBuyBody) -> dict[str, Any]:
         price_mode=price_mode,
         price_value=price_value,
         target_epoch=effective_target_epoch,
+        base_url=body.base_url,
     )
 
     try:

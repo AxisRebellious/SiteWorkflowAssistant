@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -540,7 +541,7 @@ def run_self_test() -> bool:
     return True
 
 
-def run_bot() -> None:
+def run_bot(stop_event: threading.Event | None = None) -> None:
     """حلقه اصلی اجرای ربات."""
     creds = ensure_bot_credentials()
     bot_token = creds["bot_token"]
@@ -549,13 +550,17 @@ def run_bot() -> None:
     if not PRIVKEY_PATH.exists():
         log.error("کلید خصوصی در مسیر %s پیدا نشد.", PRIVKEY_PATH)
         log.error("ابتدا اسکریپت admin_keygen.py را روی این سیستم اجرا کنید.")
-        sys.exit(1)
+        if stop_event is None:
+            sys.exit(1)
+        return
 
     try:
         privkey = lic.load_privkey(str(PRIVKEY_PATH))
     except Exception as exc:
         log.error("خطا در بارگذاری کلید خصوصی: %s", exc)
-        sys.exit(1)
+        if stop_event is None:
+            sys.exit(1)
+        return
 
     licenses = load_licenses()
     offset = load_offset()
@@ -566,10 +571,11 @@ def run_bot() -> None:
     if offset is not None:
         log.info("آخرین آفست پیام‌ها: %d", offset)
 
+    poll_timeout = 5 if stop_event is not None else 20
     with httpx.Client(follow_redirects=True) as client:
-        while True:
+        while stop_event is None or not stop_event.is_set():
             try:
-                updates = get_bale_updates(client, bot_token, offset, timeout=20)
+                updates = get_bale_updates(client, bot_token, offset, timeout=poll_timeout)
                 if not updates:
                     continue
 
@@ -614,6 +620,15 @@ def run_bot() -> None:
                 safe_err = mask_token(str(exc), bot_token)
                 log.error("خطای غیرمنتظره در ربات: %s", safe_err)
                 time.sleep(2)
+
+
+def start_bot_in_background(stop_event: threading.Event | None = None) -> threading.Thread:
+    """اجرای خودکار ربات در ترد پس‌زمینه."""
+    if stop_event is None:
+        stop_event = threading.Event()
+    t = threading.Thread(target=run_bot, args=(stop_event,), daemon=True, name="BaleAdminBotThread")
+    t.start()
+    return t
 
 
 def main() -> None:

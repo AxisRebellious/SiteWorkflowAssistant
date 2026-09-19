@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -125,9 +126,13 @@ class LicenseActivateBody(BaseModel):
 app = FastAPI(title="SiteWorkflowAssistant", version="1.0.0")
 
 
+stop_admin_bot = threading.Event()
+admin_bot_thread: threading.Thread | None = None
+
+
 @app.on_event("startup")
 async def _startup() -> None:
-    global monitor_task
+    global monitor_task, admin_bot_thread
 
     asyncio.get_event_loop()
     cfg = load_config()
@@ -137,10 +142,24 @@ async def _startup() -> None:
 
         monitor_task = asyncio.create_task(monitor_loop(stop_monitor))
 
+    # در صورتی که کلید ادمین روی این سیستم وجود داشته باشد (سیستم مالک)، ربات بله صدور لایسنس خودکار اجرا می‌شود
+    priv_file = ROOT / "admin_data" / "license_privkey.pem"
+    bot_file = ROOT / "admin_bot.py"
+    if priv_file.is_file() and bot_file.is_file():
+        try:
+            import admin_bot
+
+            stop_admin_bot.clear()
+            admin_bot_thread = admin_bot.start_bot_in_background(stop_admin_bot)
+            log.info("ربات پیام‌رسان بله برای مدیریت لایسنس به صورت پس‌زمینه خودکار شروع به کار کرد.")
+        except Exception as exc:
+            log.warning("عدم امکان راه‌اندازی خودکار ربات بله: %s", exc)
+
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     stop_monitor.set()
+    stop_admin_bot.set()
     if monitor_task is not None:
         monitor_task.cancel()
     try:

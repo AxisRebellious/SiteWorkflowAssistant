@@ -1,6 +1,7 @@
 /**
  * EasyTrader (Mofid PWA) Dedicated Fast Buy Assistant
- * Frontend controller: Single Buy (Real / Dry-Run), Queue Execution, Live Log Polling
+ * Frontend controller: Single Buy (Real / Dry-Run), Queue Execution,
+ * Live Log Polling, Smart Scheduler (5-min warm-up), Persistent Browser Session
  */
 
 (function () {
@@ -15,6 +16,12 @@
   let logPollInterval = null;
   let isLicenseActive = true;
   let licenseHeartbeatInterval = null;
+
+  // Scheduler State
+  let scheduleTimer = null;
+  let isScheduledWaiting = false;
+  let scheduledMode = null; // 'single' | 'queue'
+  let scheduledScheduleInfo = null;
 
   // DOM Helpers
   function el(id) {
@@ -117,6 +124,8 @@
 
     if (emptyEl) emptyEl.style.display = "none";
 
+    const isBusy = isQueueRunning || isSingleRunning || isScheduledWaiting;
+
     queue.forEach((item, index) => {
       const row = document.createElement("div");
       row.className = "queue-item";
@@ -129,7 +138,7 @@
       } else if (item.status === "success") {
         statusHtml = '<span class="status-pill status-success">✅ موفق</span>';
       } else if (item.status === "error") {
-        statusHtml = `<span class="status-pill status-error" title="${item.error || 'خطا'}">❌ خطا</span>`;
+        statusHtml = `<span class="status-pill status-error" title="${escapeHtml(item.error || 'خطا')}">❌ خطا</span>`;
       } else if (item.status === "cancelled") {
         statusHtml = '<span class="status-pill status-cancelled">⏹️ متوقف شد</span>';
       }
@@ -143,7 +152,7 @@
         </div>
         <div>${statusHtml}</div>
         <div class="queue-actions">
-          <button type="button" class="danger small btn-del-item" data-id="${item.id}" ${isQueueRunning || isSingleRunning ? "disabled" : ""}>حذف</button>
+          <button type="button" class="danger small btn-del-item" data-id="${item.id}" ${isBusy ? "disabled" : ""}>حذف</button>
         </div>
       `;
 
@@ -171,6 +180,11 @@
   }
 
   function addToQueue() {
+    if (isScheduledWaiting || isQueueRunning || isSingleRunning) {
+      showToast("در حین اجرای برنامه امکان افزودن به صف وجود ندارد.", false);
+      return;
+    }
+
     const stock = el("et_stock").value.trim();
     const qty = el("et_qty").value.trim();
 
@@ -209,8 +223,8 @@
   }
 
   function deleteQueueItem(id) {
-    if (isQueueRunning) {
-      showToast("صف در حال اجراست و امکان حذف آیتم نیست.", false);
+    if (isQueueRunning || isScheduledWaiting) {
+      showToast("صف در حال اجرا یا زمان‌بندی است و امکان حذف آیتم نیست.", false);
       return;
     }
     const queue = loadQueue();
@@ -220,8 +234,8 @@
   }
 
   function clearQueue() {
-    if (isQueueRunning) {
-      showToast("صف در حال اجراست و امکان پاک‌سازی وجود ندارد.", false);
+    if (isQueueRunning || isScheduledWaiting) {
+      showToast("صف در حال اجرا یا زمان‌بندی است و امکان پاک‌سازی وجود ندارد.", false);
       return;
     }
     if (!confirm("آیا از پاک کردن تمامی سفارش‌های صف اطمینان دارید؟")) return;
@@ -232,21 +246,74 @@
 
   // Get credentials
   function getCredentials() {
-    const username = el("et_username").value.trim();
-    const password = el("et_password").value.trim();
+    const username = (el("et_username")?.value || "").trim();
+    const password = (el("et_password")?.value || "").trim();
     return { username, password };
   }
 
-  // License and Overlay Helpers
-  function setBuyButtonsDisabled(disabled) {
-    const buyBtn = el("btn_buy_single");
-    const queueBtn = el("btn_queue_run");
-    const addBtn = el("btn_add_to_queue");
-    if (buyBtn) buyBtn.disabled = disabled;
-    if (queueBtn) queueBtn.disabled = disabled;
-    if (addBtn) addBtn.disabled = disabled;
+  // Unified Button & Status States
+  function updateButtonsState() {
+    const anyRunning = isSingleRunning || isQueueRunning;
+    const isWaiting = isScheduledWaiting;
+
+    if (el("btn_buy_single")) {
+      el("btn_buy_single").disabled = anyRunning || isWaiting || !isLicenseActive;
+    }
+    if (el("btn_queue_run")) {
+      el("btn_queue_run").disabled = anyRunning || isWaiting || !isLicenseActive;
+    }
+    if (el("btn_add_to_queue")) {
+      el("btn_add_to_queue").disabled = anyRunning || isWaiting || !isLicenseActive;
+    }
+    if (el("btn_queue_clear")) {
+      el("btn_queue_clear").disabled = anyRunning || isWaiting;
+    }
+    if (el("btn_close_browser")) {
+      el("btn_close_browser").disabled = anyRunning || isWaiting;
+    }
+
+    if (el("btn_stop_single")) {
+      el("btn_stop_single").disabled = !(isSingleRunning || (isWaiting && scheduledMode === "single"));
+    }
+    if (el("btn_queue_stop")) {
+      el("btn_queue_stop").disabled = !(isQueueRunning || (isWaiting && scheduledMode === "queue"));
+    }
+
+    if (isWaiting) {
+      if (el("et_single_status")) {
+        el("et_single_status").textContent = "زمان‌بندی فعال — در انتظار زمان آماده‌سازی";
+        el("et_single_status").style.color = "#fbbf24";
+      }
+    } else if (isSingleRunning) {
+      if (el("et_single_status")) {
+        el("et_single_status").textContent = "در حال اجرای خرید...";
+        el("et_single_status").style.color = "#60a5fa";
+      }
+    } else {
+      if (el("et_single_status")) {
+        el("et_single_status").textContent = "آماده";
+        el("et_single_status").style.color = "var(--text-muted)";
+      }
+    }
+
+    renderQueue();
   }
 
+  function setRunningState(type, running) {
+    if (type === "single") {
+      isSingleRunning = running;
+    } else if (type === "queue") {
+      isQueueRunning = running;
+    }
+    updateButtonsState();
+  }
+
+  function setBuyButtonsDisabled(disabled) {
+    isLicenseActive = !disabled;
+    updateButtonsState();
+  }
+
+  // License and Overlay Helpers
   function showLicenseOverlay(message) {
     let overlay = el("et_license_overlay");
     if (!overlay) {
@@ -336,9 +403,7 @@
       // License is active
       isLicenseActive = true;
       hideLicenseOverlay();
-      if (!isSingleRunning && !isQueueRunning) {
-        setBuyButtonsDisabled(false);
-      }
+      updateButtonsState();
       return true;
     } catch (err) {
       isLicenseActive = false;
@@ -346,28 +411,6 @@
       setBuyButtonsDisabled(true);
       return false;
     }
-  }
-
-  // Set running state in UI
-  function setRunningState(type, running) {
-    if (type === "single") {
-      isSingleRunning = running;
-      el("btn_buy_single").disabled = running || !isLicenseActive;
-      el("btn_stop_single").disabled = !running;
-      el("btn_queue_run").disabled = running || isQueueRunning || !isLicenseActive;
-      el("btn_add_to_queue").disabled = running || !isLicenseActive;
-      el("btn_queue_clear").disabled = running;
-      el("et_single_status").textContent = running ? "در حال اجرای خرید..." : "آماده";
-      el("et_single_status").style.color = running ? "#60a5fa" : "var(--text-muted)";
-    } else if (type === "queue") {
-      isQueueRunning = running;
-      el("btn_queue_run").disabled = running || !isLicenseActive;
-      el("btn_queue_stop").disabled = !running;
-      el("btn_buy_single").disabled = running || isSingleRunning || !isLicenseActive;
-      el("btn_add_to_queue").disabled = running || !isLicenseActive;
-      el("btn_queue_clear").disabled = running;
-    }
-    renderQueue();
   }
 
   // Price mode: max (default) or custom value
@@ -383,12 +426,234 @@
     return "سقف قیمت";
   }
 
-  // Execute a single buy request
-  async function executeBuyRequest(stock, qty, dryRun, cancelId, priceOpts) {
+  // Schedule Helpers
+  function formatCountdown(ms) {
+    if (ms <= 0) return "00:00:00";
+    const totalSec = Math.floor(ms / 1000);
+    const s = totalSec % 60;
+    const m = Math.floor(totalSec / 60) % 60;
+    const h = Math.floor(totalSec / 3600);
+    const pad = (n) => String(n).padStart(2, "0");
+    if (h >= 24) {
+      const days = Math.floor(h / 24);
+      const remH = h % 24;
+      return `${days} روز و ${pad(remH)}:${pad(m)}:${pad(s)}`;
+    }
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  }
+
+  function updateScheduleBanner(targetTimeStr, wakeTimeStr, remainingMs) {
+    const banner = el("et_schedule_banner");
+    if (!banner) return;
+    const countdownStr = formatCountdown(remainingMs);
+    banner.innerHTML = `
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
+        <div>
+          <span>⏳ <strong>زمان‌بندی فعال:</strong></span>
+          <span>زمان هدف [<strong>${escapeHtml(targetTimeStr)}</strong>]</span>
+          <span style="opacity: 0.6; margin: 0 4px;">|</span>
+          <span>شروع آماده‌سازی در [<strong>${escapeHtml(wakeTimeStr)}</strong>]</span>
+          <span style="opacity: 0.6; margin: 0 4px;">|</span>
+          <span>مانده تا شروع: <span class="schedule-countdown">${countdownStr}</span></span>
+        </div>
+        <button type="button" class="danger small" id="btn_banner_cancel" style="padding: 3px 10px; font-size: 0.8rem;">⏹️ لغو زمان‌بندی</button>
+      </div>
+    `;
+    banner.classList.add("active");
+    const cancelBtn = el("btn_banner_cancel");
+    if (cancelBtn && !cancelBtn.dataset.bound) {
+      cancelBtn.dataset.bound = "1";
+      cancelBtn.addEventListener("click", () => cancelSchedule("با دکمه لغو در اعلان زمان‌بندی"));
+    }
+  }
+
+  function hideScheduleBanner() {
+    const banner = el("et_schedule_banner");
+    if (banner) {
+      banner.classList.remove("active");
+      banner.innerHTML = "";
+    }
+  }
+
+  function cancelSchedule(reason = "توسط کاربر") {
+    if (scheduleTimer) {
+      clearInterval(scheduleTimer);
+      scheduleTimer = null;
+    }
+    isScheduledWaiting = false;
+    scheduledMode = null;
+    scheduledScheduleInfo = null;
+    hideScheduleBanner();
+    logAppend(`⏹️ زمان‌بندی خودکار ${reason} لغو شد.`);
+    showToast("زمان‌بندی خودکار لغو شد.", false);
+    setRunningState("single", false);
+    setRunningState("queue", false);
+  }
+
+  function initScheduleInputs() {
+    const dateInput = el("et_schedule_date");
+    const timeInput = el("et_schedule_time");
+    const enabledCheck = el("et_schedule_enabled");
+    const container = el("et_schedule_inputs_container");
+
+    if (dateInput && !dateInput.value) {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, "0");
+      const d = String(now.getDate()).padStart(2, "0");
+      dateInput.value = `${y}-${m}-${d}`;
+    }
+
+    if (timeInput && !timeInput.value) {
+      timeInput.value = "08:45:00";
+    }
+
+    if (enabledCheck && container) {
+      const toggle = () => {
+        container.style.display = enabledCheck.checked ? "grid" : "none";
+      };
+      enabledCheck.addEventListener("change", toggle);
+      toggle();
+    }
+  }
+
+  function getScheduleSettings() {
+    const enabledCheck = el("et_schedule_enabled");
+    if (!enabledCheck || !enabledCheck.checked) {
+      return { enabled: false };
+    }
+
+    const dateVal = (el("et_schedule_date")?.value || "").trim();
+    const timeVal = (el("et_schedule_time")?.value || "").trim();
+
+    if (!dateVal) {
+      showToast("لطفاً تاریخ زمان‌بندی را مشخص کنید.", false);
+      el("et_schedule_date")?.focus();
+      return null;
+    }
+    if (!timeVal) {
+      showToast("لطفاً ساعت دقیق زمان‌بندی را مشخص کنید.", false);
+      el("et_schedule_time")?.focus();
+      return null;
+    }
+
+    const dateParts = dateVal.split("-").map(Number);
+    if (dateParts.length !== 3 || dateParts.some(isNaN)) {
+      showToast("فرمت تاریخ نامعتبر است.", false);
+      return null;
+    }
+
+    const timeParts = timeVal.split(":").map(Number);
+    if (timeParts.length < 2 || timeParts.some(isNaN)) {
+      showToast("فرمت ساعت نامعتبر است.", false);
+      return null;
+    }
+
+    const [year, month, day] = dateParts;
+    const [hours, minutes, seconds = 0] = timeParts;
+
+    const targetDate = new Date(year, month - 1, day, hours, minutes, seconds || 0);
+    const T_target = targetDate.getTime();
+    if (isNaN(T_target)) {
+      showToast("تاریخ یا زمان وارد شده نامعتبر است.", false);
+      return null;
+    }
+
+    const now = Date.now();
+    if (T_target < now) {
+      showToast(`زمان هدف (${timeVal}) برای امروز سپری شده است. لطفاً ساعت یا تاریخ آینده را تعیین کنید.`, false);
+      el("et_schedule_time")?.focus();
+      return null;
+    }
+
+    // Wake-up time: 5 minutes before T_target
+    const T_wake = T_target - 5 * 60 * 1000;
+
+    return {
+      enabled: true,
+      T_target,
+      T_wake,
+      dateStr: dateVal,
+      timeStr: timeVal,
+      targetDate,
+      target_epoch: Math.floor(T_target / 1000),
+      target_time: timeVal,
+    };
+  }
+
+  function startScheduleCountdown(sched, mode) {
+    if (scheduleTimer) {
+      clearInterval(scheduleTimer);
+      scheduleTimer = null;
+    }
+
+    isScheduledWaiting = true;
+    scheduledMode = mode;
+    scheduledScheduleInfo = sched;
+    updateButtonsState();
+
+    const targetTimeStr = sched.timeStr;
+    const wakeDate = new Date(sched.T_wake);
+    const wakeTimeStr = wakeDate.toLocaleTimeString("fa-IR", { hour12: false });
+
+    logAppend(`⏱️ زمان‌بندی هوشمند شروع خودکار فعال شد.`);
+    logAppend(`🎯 زمان هدف سرخطی: ${targetTimeStr}`);
+    logAppend(`🚀 زمان شروع آماده‌سازی (۵ دقیقه قبل): ${wakeTimeStr}`);
+    logAppend(`⏳ سامانه تا زمان آماده‌سازی در حالت انتظار معکوس قرار می‌گیرد...`);
+    showToast(`زمان‌بندی فعال شد. شروع آماده‌سازی در ${wakeTimeStr}`, true);
+
+    const updateTick = () => {
+      const now = Date.now();
+      const remainingMs = sched.T_wake - now;
+
+      if (remainingMs <= 0) {
+        // Time to wake up!
+        clearInterval(scheduleTimer);
+        scheduleTimer = null;
+        isScheduledWaiting = false;
+        scheduledMode = null;
+        scheduledScheduleInfo = null;
+        updateButtonsState();
+
+        const banner = el("et_schedule_banner");
+        if (banner) {
+          banner.innerHTML = `<div>⚡ <strong>زمان آماده‌سازی فرا رسید!</strong> در حال اجرای اتوماسیون (هدف سرخطی: ${escapeHtml(targetTimeStr)})...</div>`;
+        }
+
+        logAppend(`\n🔔 زمان بیداری فرا رسید! شروع خودکار اتوماسیون (۵ دقیقه پیش از سرخطی ${targetTimeStr})...`);
+        showToast("زمان بیداری فرا رسید. شروع اتوماسیون آماده‌سازی خرید...", true);
+
+        const execInfo = {
+          target_epoch: sched.target_epoch,
+          target_time: sched.target_time,
+        };
+
+        if (mode === "single") {
+          runSingleBuyExecution(execInfo);
+        } else if (mode === "queue") {
+          runQueueExecution(execInfo);
+        }
+      } else {
+        updateScheduleBanner(targetTimeStr, wakeTimeStr, remainingMs);
+      }
+    };
+
+    updateTick();
+    if (isScheduledWaiting) {
+      scheduleTimer = setInterval(updateTick, 1000);
+    }
+  }
+
+  // Execute a single buy request (with persistent browser & optional target epoch)
+  async function executeBuyRequest(stock, qty, dryRun, cancelId, priceOpts, extraParams = {}) {
     const creds = getCredentials();
     const retryMaxRaw = parseInt((el("et_retry_max") || {}).value || "900", 10);
     const retryWaitRaw = parseInt((el("et_retry_wait") || {}).value || "45", 10);
     const price = priceOpts && priceOpts.mode === "custom" ? { mode: "custom", value: priceOpts.value || "" } : { mode: "max", value: "" };
+
+    // Persistent browser across operations
+    const keepBrowser = extraParams.keep_browser !== undefined ? Boolean(extraParams.keep_browser) : true;
+
     const payload = {
       username: creds.username,
       password: creds.password,
@@ -401,7 +666,15 @@
       cancellation_id: cancelId,
       submit_max_attempts: Math.max(1, Math.min(isNaN(retryMaxRaw) ? 900 : retryMaxRaw, 2000)),
       submit_wait_s: Math.max(5, Math.min(isNaN(retryWaitRaw) ? 45 : retryWaitRaw, 300)),
+      keep_browser: keepBrowser,
     };
+
+    if (extraParams.target_epoch) {
+      payload.target_epoch = extraParams.target_epoch;
+    }
+    if (extraParams.target_time) {
+      payload.target_time = extraParams.target_time;
+    }
 
     const res = await fetch("/api/easytrader/buy", {
       method: "POST",
@@ -421,48 +694,28 @@
     return data;
   }
 
-  // Single Buy Click
-  async function handleSingleBuy() {
-    if (!isLicenseActive) {
-      showLicenseOverlay("لایسنس فعال نیست. لطفاً ابتدا لایسنس را در صفحه اصلی فعال کنید.");
-      setBuyButtonsDisabled(true);
-      return;
-    }
-    const creds = getCredentials();
-    if (!creds.username || !creds.password) {
-      showToast("لطفاً ابتدا نام کاربری و رمز عبور ایزی‌تریدر را در کارت ۱ وارد کنید.", false);
-      el("et_username").focus();
-      return;
-    }
-
+  // Single Buy Execution Runner
+  async function runSingleBuyExecution(scheduleInfo = null) {
     const stock = el("et_stock").value.trim();
     const qty = el("et_qty").value.trim();
-    if (!stock) {
-      showToast("لطفاً نام یا نماد سهم را وارد کنید.", false);
-      el("et_stock").focus();
-      return;
-    }
-    if (!qty || Number(qty) <= 0) {
-      showToast("لطفاً تعداد/حجم خرید را معتبر وارد کنید.", false);
-      el("et_qty").focus();
-      return;
-    }
     const price = getPriceSettings();
-    if (price.mode === "custom" && !(Number(price.value) > 0)) {
-      showToast("لطفاً قیمت دلخواه معتبر وارد کنید.", false);
-      el("et_price").focus();
-      return;
-    }
-
     const dryRun = el("et_dry_run").checked;
+
     activeCancelId = "et_run_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
 
     setRunningState("single", true);
-    logSet(`▶️ شروع خرید برای نماد: ${stock} | حجم: ${qty} | حالت: ${dryRun ? "آزمایشی (Dry-Run)" : "خرید واقعی"}`);
+    const schedText = scheduleInfo ? ` | زمان‌بندی سرخطی: ${scheduleInfo.target_time}` : "";
+    logSet(`▶️ شروع خرید برای نماد: ${stock} | حجم: ${qty} | حالت: ${dryRun ? "آزمایشی (Dry-Run)" : "خرید واقعی"}${schedText}`);
     startLogPolling();
 
     try {
-      const result = await executeBuyRequest(stock, qty, dryRun, activeCancelId, price);
+      const extraParams = {
+        keep_browser: true,
+        target_epoch: scheduleInfo ? scheduleInfo.target_epoch : undefined,
+        target_time: scheduleInfo ? scheduleInfo.target_time : undefined,
+      };
+
+      const result = await executeBuyRequest(stock, qty, dryRun, activeCancelId, price, extraParams);
       stopLogPolling();
 
       // Check results
@@ -501,12 +754,86 @@
       logAppend(`❌ خطای سرور: ${err.message}`);
     } finally {
       activeCancelId = null;
+      hideScheduleBanner();
       setRunningState("single", false);
     }
   }
 
+  // Single Buy Click Handler
+  async function handleSingleBuy() {
+    if (!isLicenseActive) {
+      showLicenseOverlay("لایسنس فعال نیست. لطفاً ابتدا لایسنس را در صفحه اصلی فعال کنید.");
+      setBuyButtonsDisabled(true);
+      return;
+    }
+    const creds = getCredentials();
+    if (!creds.username || !creds.password) {
+      showToast("لطفاً ابتدا نام کاربری و رمز عبور ایزی‌تریدر را در کارت ۱ وارد کنید.", false);
+      el("et_username").focus();
+      return;
+    }
+
+    const stock = el("et_stock").value.trim();
+    const qty = el("et_qty").value.trim();
+    if (!stock) {
+      showToast("لطفاً نام یا نماد سهم را وارد کنید.", false);
+      el("et_stock").focus();
+      return;
+    }
+    if (!qty || Number(qty) <= 0) {
+      showToast("لطفاً تعداد/حجم خرید را معتبر وارد کنید.", false);
+      el("et_qty").focus();
+      return;
+    }
+    const price = getPriceSettings();
+    if (price.mode === "custom" && !(Number(price.value) > 0)) {
+      showToast("لطفاً قیمت دلخواه معتبر وارد کنید.", false);
+      el("et_price").focus();
+      return;
+    }
+
+    // Check Schedule
+    const sched = getScheduleSettings();
+    if (sched === null) {
+      // Validation error in schedule fields
+      return;
+    }
+
+    if (sched.enabled) {
+      const now = Date.now();
+      if (now < sched.T_wake) {
+        // Case 1: Waiting before the 5-min prep window
+        startScheduleCountdown(sched, "single");
+        return;
+      } else if (now >= sched.T_wake && now < sched.T_target) {
+        // Case 2: Inside the 5-min prep window -> run immediately with target_epoch
+        logAppend(`⚡ در بازه آماده‌سازی ۵ دقیقه‌ای قرار داریم. شروع فوری اتوماسیون (هدف سرخطی: ${sched.timeStr})...`);
+        showToast(`در بازه آماده‌سازی ۵ دقیقه پیش از ${sched.timeStr} قرار داریم. شروع فوری...`, true);
+        const banner = el("et_schedule_banner");
+        if (banner) {
+          banner.innerHTML = `<div>⚡ <strong>آماده‌سازی فوری:</strong> در حال اجرای اتوماسیون جهت ثبت در رأس ساعت [<strong>${escapeHtml(sched.timeStr)}</strong>]</div>`;
+          banner.classList.add("active");
+        }
+        await runSingleBuyExecution({ target_epoch: sched.target_epoch, target_time: sched.target_time });
+        return;
+      } else {
+        // Case 3: now >= T_target -> execute immediately
+        logAppend(`⚡ زمان هدف سپری شده یا هم‌اکنون است. اجرای فوری...`);
+        await runSingleBuyExecution(null);
+        return;
+      }
+    }
+
+    // Direct execution without schedule
+    await runSingleBuyExecution(null);
+  }
+
   // Single Stop Click
   async function handleSingleStop() {
+    if (isScheduledWaiting && scheduledMode === "single") {
+      cancelSchedule("با دکمه توقف خرید");
+      return;
+    }
     if (!activeCancelId) return;
     try {
       logAppend("⏹️ در حال ارسال سیگنال توقف به سرور...");
@@ -521,29 +848,16 @@
     }
   }
 
-  // Queue Sequential Run
-  async function handleQueueRun() {
-    if (!isLicenseActive) {
-      showLicenseOverlay("لایسنس فعال نیست. لطفاً ابتدا لایسنس را در صفحه اصلی فعال کنید.");
-      setBuyButtonsDisabled(true);
-      return;
-    }
-    const creds = getCredentials();
-    if (!creds.username || !creds.password) {
-      showToast("لطفاً نام کاربری و رمز عبور را در کارت ۱ وارد کنید.", false);
-      el("et_username").focus();
-      return;
-    }
-
+  // Queue Execution Runner (Persistent Browser)
+  async function runQueueExecution(scheduleInfo = null) {
     const queue = loadQueue();
-    if (queue.length === 0) {
-      showToast("صف سفارش‌ها خالی است. ابتدا نمادها را به صف اضافه کنید.", false);
-      return;
-    }
+    if (queue.length === 0) return;
 
     const dryRun = el("et_dry_run").checked;
     setRunningState("queue", true);
-    logSet(`▶️ شروع اجرای صف شامل ${queue.length} سفارش | حالت: ${dryRun ? "آزمایشی" : "خرید واقعی"}`);
+
+    const schedText = scheduleInfo ? ` | زمان‌بندی هدف: ${scheduleInfo.target_time}` : "";
+    logSet(`▶️ شروع اجرای صف شامل ${queue.length} سفارش | حالت: ${dryRun ? "آزمایشی" : "خرید واقعی"}${schedText}`);
 
     for (let i = 0; i < queue.length; i++) {
       if (!isQueueRunning) {
@@ -557,11 +871,31 @@
       renderQueue();
 
       activeCancelId = "et_q_" + item.id + "_" + Date.now();
-      logAppend(`\n--- در حال اجرای سفارش [${i + 1}/${queue.length}]: ${item.stock} (${item.qty} سهم) ---`);
+
+      if (i === 0) {
+        logAppend(`\n--- در حال اجرای سفارش [${i + 1}/${queue.length}]: ${item.stock} (${item.qty} سهم) ---`);
+        logAppend(`🚀 باز کردن مرورگر و ورود به ایزی‌تریدر...`);
+      } else {
+        logAppend(`\n--- در حال اجرای سفارش [${i + 1}/${queue.length}]: ${item.stock} (${item.qty} سهم) ---`);
+        logAppend(`⚡ سفارش [${i + 1}/${queue.length}]: استفاده از نشست فعال مرورگر و ثبت سریع...`);
+      }
       startLogPolling();
 
       try {
-        const result = await executeBuyRequest(item.stock, item.qty, dryRun, activeCancelId, { mode: item.price_mode, value: item.price_value });
+        const extraParams = {
+          keep_browser: true,
+          target_epoch: scheduleInfo ? scheduleInfo.target_epoch : undefined,
+          target_time: scheduleInfo ? scheduleInfo.target_time : undefined,
+        };
+
+        const result = await executeBuyRequest(
+          item.stock,
+          item.qty,
+          dryRun,
+          activeCancelId,
+          { mode: item.price_mode, value: item.price_value },
+          extraParams
+        );
         stopLogPolling();
 
         const resList = result.results || [];
@@ -597,20 +931,83 @@
 
       // Pause between queue items
       if (i < queue.length - 1 && isQueueRunning) {
-        logAppend("⏳ مکث ۲ ثانیه‌ای قبل از سفارش بعدی صف...");
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        logAppend("⏳ مکث ۱.۵ ثانیه‌ای قبل از سفارش بعدی صف...");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
       }
     }
 
     stopLogPolling();
     activeCancelId = null;
     setRunningState("queue", false);
+    hideScheduleBanner();
+
     showToast("اجرای صف نوبتی به پایان رسید.", true);
     logAppend("\n🏁 پایان کامل صف نوبتی ایزی‌تریدر.");
+    alert("تمامی سفارش‌های صف نوبتی پردازش شدند.");
+  }
+
+  // Queue Run Click Handler
+  async function handleQueueRun() {
+    if (!isLicenseActive) {
+      showLicenseOverlay("لایسنس فعال نیست. لطفاً ابتدا لایسنس را در صفحه اصلی فعال کنید.");
+      setBuyButtonsDisabled(true);
+      return;
+    }
+    const creds = getCredentials();
+    if (!creds.username || !creds.password) {
+      showToast("لطفاً نام کاربری و رمز عبور را در کارت ۱ وارد کنید.", false);
+      el("et_username").focus();
+      return;
+    }
+
+    const queue = loadQueue();
+    if (queue.length === 0) {
+      showToast("صف سفارش‌ها خالی است. ابتدا نمادها را به صف اضافه کنید.", false);
+      return;
+    }
+
+    // Check Schedule
+    const sched = getScheduleSettings();
+    if (sched === null) {
+      // Validation error in schedule fields
+      return;
+    }
+
+    if (sched.enabled) {
+      const now = Date.now();
+      if (now < sched.T_wake) {
+        // Case 1: Waiting before the 5-min prep window
+        startScheduleCountdown(sched, "queue");
+        return;
+      } else if (now >= sched.T_wake && now < sched.T_target) {
+        // Case 2: Inside the 5-min prep window -> run immediately with target_epoch
+        logAppend(`⚡ در بازه آماده‌سازی ۵ دقیقه‌ای قرار داریم. شروع فوری صف نوبتی (هدف سرخطی: ${sched.timeStr})...`);
+        showToast(`در بازه آماده‌سازی ۵ دقیقه پیش از ${sched.timeStr} قرار داریم. شروع فوری صف...`, true);
+        const banner = el("et_schedule_banner");
+        if (banner) {
+          banner.innerHTML = `<div>⚡ <strong>آماده‌سازی فوری صف:</strong> در حال اجرای اتوماسیون جهت ثبت در رأس ساعت [<strong>${escapeHtml(sched.timeStr)}</strong>]</div>`;
+          banner.classList.add("active");
+        }
+        await runQueueExecution({ target_epoch: sched.target_epoch, target_time: sched.target_time });
+        return;
+      } else {
+        // Case 3: now >= T_target -> execute immediately
+        logAppend(`⚡ زمان هدف سپری شده یا هم‌اکنون است. اجرای فوری صف...`);
+        await runQueueExecution(null);
+        return;
+      }
+    }
+
+    // Direct execution without schedule
+    await runQueueExecution(null);
   }
 
   // Queue Stop
   async function handleQueueStop() {
+    if (isScheduledWaiting && scheduledMode === "queue") {
+      cancelSchedule("با دکمه توقف صف");
+      return;
+    }
     isQueueRunning = false;
     logAppend("⏹️ درخواست توقف صف ثبت شد.");
     if (activeCancelId) {
@@ -627,8 +1024,43 @@
     setRunningState("queue", false);
   }
 
+  // Close Browser / Reset Session Handler
+  async function handleCloseBrowser() {
+    const btn = el("btn_close_browser");
+    if (btn) btn.disabled = true;
+    logAppend("🌐 در حال ارسال درخواست بستن مرورگر و بازنشانی نشست به سرور...");
+    try {
+      const res = await fetch("/api/easytrader/reset_session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (res.ok) {
+        showToast("پنجره مرورگر و نشست با موفقیت بسته شد.", true);
+        logAppend("✅ مرورگر و نشست فعال با موفقیت بسته شد.");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        const msg = data.detail || data.message || `کد خطا: ${res.status}`;
+        if (res.status === 404) {
+          logAppend("ℹ️ نشست فعالی در سرور یافت نشد یا قبلاً بسته شده است.");
+          showToast("نشست مرورگر بازنشانی شد.", true);
+        } else {
+          showToast("خطا در بستن مرورگر: " + msg, false);
+          logAppend("❌ خطا در بستن مرورگر: " + msg);
+        }
+      }
+    } catch (err) {
+      showToast("خطای ارتباط با سرور: " + err.message, false);
+      logAppend("❌ خطای ارتباط در بستن مرورگر: " + err.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   // Initialization
   window.addEventListener("DOMContentLoaded", () => {
+    // Initialize Schedule Inputs
+    initScheduleInputs();
+
     // Buttons
     el("btn_buy_single")?.addEventListener("click", handleSingleBuy);
     el("btn_stop_single")?.addEventListener("click", handleSingleStop);
@@ -636,6 +1068,7 @@
     el("btn_queue_run")?.addEventListener("click", handleQueueRun);
     el("btn_queue_stop")?.addEventListener("click", handleQueueStop);
     el("btn_queue_clear")?.addEventListener("click", clearQueue);
+    el("btn_close_browser")?.addEventListener("click", handleCloseBrowser);
     el("btn_clear_log")?.addEventListener("click", () => {
       logSet("لاگ پاک شد. منتظر آغاز عملیات...");
     });

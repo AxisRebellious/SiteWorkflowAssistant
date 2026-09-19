@@ -57,6 +57,58 @@
         border-color: var(--border-hover);
         text-decoration: none;
       }
+      .schedule-section {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: var(--radius);
+        padding: 16px;
+        margin-top: 18px;
+      }
+      .schedule-banner {
+        display: none;
+        margin-top: 14px;
+        padding: 12px 16px;
+        border-radius: 8px;
+        background: rgba(59, 130, 246, 0.12);
+        border: 1px solid rgba(59, 130, 246, 0.35);
+        color: #93c5fd;
+        font-size: 0.9rem;
+        line-height: 1.6;
+        box-shadow: 0 0 15px rgba(59, 130, 246, 0.15);
+      }
+      .schedule-banner.active {
+        display: block;
+        animation: slideDown 0.3s ease-out;
+      }
+      .schedule-countdown {
+        font-family: monospace;
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #60a5fa;
+        padding: 2px 8px;
+        background: rgba(0, 0, 0, 0.45);
+        border-radius: 6px;
+        display: inline-block;
+        direction: ltr;
+        margin: 0 4px;
+      }
+      input[type="date"], input[type="time"] {
+        width: 100%;
+        padding: 11px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.3);
+        color: var(--text-main);
+        font: inherit;
+        transition: all 0.2s;
+        outline: none;
+        color-scheme: dark;
+      }
+      input[type="date"]:focus, input[type="time"]:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        background: rgba(0, 0, 0, 0.5);
+      }
     </style>
   </head>
   <body>
@@ -148,6 +200,33 @@
           </div>
         </div>
 
+        <!-- بخش زمان‌بندی هوشمند شروع (سرخطی) -->
+        <div class="schedule-section spaced-top" id="section-et-schedule">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <label class="inline-check" style="cursor: pointer; font-weight: 600; color: var(--text-main);">
+              <input type="checkbox" id="et_schedule_enabled" />
+              <span>⏱️ فعال‌سازی زمان‌بندی خودکار (شروع ۵ دقیقه زودتر برای آماده‌سازی)</span>
+            </label>
+          </div>
+
+          <div id="et_schedule_inputs_container" class="grid-2 spaced-top" style="display: none;">
+            <div class="field">
+              <label for="et_schedule_date">تاریخ اجرا</label>
+              <input type="date" id="et_schedule_date" />
+            </div>
+            <div class="field">
+              <label for="et_schedule_time">ساعت دقیق سرخطی (ثانیه‌دار)</label>
+              <input type="time" id="et_schedule_time" step="1" value="08:45:00" />
+            </div>
+          </div>
+
+          <p class="muted-small" style="margin-top: 10px; line-height: 1.6;">
+            💡 با فعال‌سازی این گزینه، برنامه دقیقاً ۵ دقیقه پیش از زمان تعیین‌شده (مثلاً ۰۸:۴۰:۰۰) خودکار شروع به کار کرده، وارد حساب می‌شود، نماد را جستجو و فرم خرید را با حجم و قیمت آماده می‌کند تا در رأس زمان مشخص‌شده با تلاش پیوسته سفارش را ثبت نماید.
+          </p>
+
+          <div id="et_schedule_banner" class="schedule-banner"></div>
+        </div>
+
         <div class="row spaced-top">
           <button type="button" id="btn_buy_single" class="primary">⚡ اجرای خرید</button>
           <button type="button" id="btn_stop_single" class="danger small" disabled>⏹️ توقف</button>
@@ -168,6 +247,7 @@
         <div class="row muted-row spaced-top">
           <button type="button" id="btn_queue_run" class="primary">▶️ اجرای صف نوبتی</button>
           <button type="button" id="btn_queue_stop" class="danger small" disabled>⏹️ توقف صف</button>
+          <button type="button" id="btn_close_browser" class="small" title="بستن نشست فعال و مرورگر باز">🌐 بستن مرورگر</button>
           <button type="button" id="btn_queue_clear" class="danger small" style="margin-right: auto;">🗑️ خالی کردن صف</button>
         </div>
         <p class="muted-small">سفارش‌های صف با استفاده از مشخصات کاربری کارت ۱ به ترتیب و پشت‌سرهم با اعتبارسنجی ارسال می‌شوند.</p>
@@ -183,6 +263,6 @@
       </section>
     </div>
 
-    <script src="/static/easytrader.js?v=20260910-1"></script>
+    <script src="/static/easytrader.js?v=20260919-1"></script>
   </body>
 </html>

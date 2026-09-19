@@ -791,6 +791,26 @@ async def close_session(session_id: str) -> None:
             pass
 
 
+async def reset_shared_playback_context() -> bool:
+    """بستن کامل نشست مرورگر اشتراکی و پاکسازی پروفایل موقت آن."""
+    global _playback_shared_context, _playback_shared_profile_dir
+    closed = False
+    if _playback_shared_context is not None:
+        try:
+            await _playback_shared_context.close()
+            closed = True
+        except Exception:
+            pass
+        _playback_shared_context = None
+    if _playback_shared_profile_dir is not None:
+        try:
+            shutil.rmtree(_playback_shared_profile_dir, ignore_errors=True)
+        except Exception:
+            pass
+        _playback_shared_profile_dir = None
+    return closed
+
+
 async def close_all_sessions() -> None:
     global _recorder_browser, _playback_shared_context, _playback_shared_profile_dir
     for sid in list(_sessions.keys()):
@@ -802,15 +822,7 @@ async def close_all_sessions() -> None:
         except Exception:
             pass
         _recorder_browser = None
-    if _playback_shared_context is not None:
-        try:
-            await _playback_shared_context.close()
-        except Exception:
-            pass
-        _playback_shared_context = None
-    if _playback_shared_profile_dir is not None:
-        shutil.rmtree(_playback_shared_profile_dir, ignore_errors=True)
-        _playback_shared_profile_dir = None
+    await reset_shared_playback_context()
 
 
 def list_saved_scripts() -> list[dict[str, Any]]:
@@ -2879,6 +2891,37 @@ async def run_scenario_steps(
         page = page_holder[0]
         await _playback_activate_page(page)
 
+        try:
+            _cur_page_url = str(page.url or "")
+        except BaseException:
+            _cur_page_url = ""
+
+        only_if_url_contains = st.get("only_if_url_contains")
+        skip_if_url_contains = st.get("skip_if_url_contains")
+        _cond_skip = False
+
+        if only_if_url_contains:
+            if isinstance(only_if_url_contains, (list, tuple)):
+                if not any(str(c) in _cur_page_url for c in only_if_url_contains if str(c)):
+                    _cond_skip = True
+            elif str(only_if_url_contains) not in _cur_page_url:
+                _cond_skip = True
+
+        if not _cond_skip and skip_if_url_contains:
+            if isinstance(skip_if_url_contains, (list, tuple)):
+                if any(str(c) in _cur_page_url for c in skip_if_url_contains if str(c)):
+                    _cond_skip = True
+            elif str(skip_if_url_contains) in _cur_page_url:
+                _cond_skip = True
+
+        if _cond_skip:
+            log_lines.append(f"قدم {st.get('id')} رد شد (شرط آدرس)")
+            try:
+                get_playback_file_logger().info("قدم %s رد شد (شرط آدرس: URL=%s)", st.get("id"), _cur_page_url)
+            except BaseException:
+                pass
+            continue
+
         ty = (st.get("type") or "").lower()
         _dms_raw = st.get("delay_ms")
         if _dms_raw is None:
@@ -3282,6 +3325,12 @@ async def run_scenario_steps(
             # ارسال سفارش تا تأیید نهایی: کلیک ارسال → مکث → خواندن پیام صفحه →
             # موفق / قطعی / قابل‌تکرار. خطای «خارج از ساعت معاملات» = صبر و تکرار
             # تا ثبت نهایی (کاربر روشن می‌کند و می‌رود؛ توقف با «توقف اجرا»).
+            _target_epoch = st.get("target_epoch")
+            try:
+                _te = float(_target_epoch) if _target_epoch is not None else None
+            except (ValueError, TypeError):
+                _te = None
+
             _suc_raw = st.get("success_contains")
             _ret_raw = st.get("retry_contains")
             _fat_raw = st.get("fatal_contains")
@@ -3335,17 +3384,29 @@ async def run_scenario_steps(
                 page_holder[0] = _playback_resolve_active_page(context, page_holder[0])
                 _pg = page_holder[0]
                 if _qty_sel and _qty_val:
-                    try:
-                        await _playback_fill_resilient(
-                            _pg, _qty_sel, _qty_val, timeout_ms=min(_att_tmo, 8000),
-                            show_marker=False, max_attempts=2, pause_between_attempts_s=0.5,
-                            cancel_check=cancel_check, progress_log=None, action_label="تعداد",
-                            turbo=True, selectors=_qty_sels,
-                        )
-                    except PlaybackCancelled:
-                        raise
-                    except BaseException as exc:
-                        raise RuntimeError(f"فرم سفارش در دسترس نیست (تلاش {_att}): {exc}")
+                    _need_fill_qty = True
+                    if _att > 1:
+                        try:
+                            _cur_q = await _pg.evaluate(
+                                "(s) => { const el = document.querySelector(s); return el ? (el.value || '') : null; }",
+                                _qty_sel,
+                            )
+                            if str(_cur_q or "").strip() == str(_qty_val).strip():
+                                _need_fill_qty = False
+                        except Exception:
+                            pass
+                    if _need_fill_qty:
+                        try:
+                            await _playback_fill_resilient(
+                                _pg, _qty_sel, _qty_val, timeout_ms=min(_att_tmo, 8000),
+                                show_marker=False, max_attempts=2, pause_between_attempts_s=0.5,
+                                cancel_check=cancel_check, progress_log=None, action_label="تعداد",
+                                turbo=True, selectors=_qty_sels,
+                            )
+                        except PlaybackCancelled:
+                            raise
+                        except BaseException as exc:
+                            raise RuntimeError(f"فرم سفارش در دسترس نیست (تلاش {_att}): {exc}")
                     try:
                         _qv = await _pg.evaluate(
                             "(s) => { const el = document.querySelector(s); return el ? (el.value || '') : null; }",
@@ -3358,47 +3419,59 @@ async def run_scenario_steps(
                             f"تعداد در فیلد ننشست (تلاش {_att})؛ مقدار فعلی: «{_qv}»."
                         )
                 if _prc_sel and _prc_val:
-                    try:
-                        await _playback_fill_resilient(
-                            _pg, _prc_sel, _prc_val, timeout_ms=min(_att_tmo, 8000),
-                            show_marker=False, max_attempts=2, pause_between_attempts_s=0.5,
-                            cancel_check=cancel_check, progress_log=None, action_label="قیمت دلخواه",
-                            turbo=True, selectors=_prc_sels,
-                        )
-                    except PlaybackCancelled:
-                        raise
-                    except BaseException as exc:
-                        raise RuntimeError(f"فیلد قیمت در دسترس نیست (تلاش {_att}): {exc}")
-                    # راستی‌آزمایی: مقدار واقعاً نشسته باشد (پرکردن بی‌صدا قبول نیست)؛
-                    # اگر نه، یک بار با مسیر غیرتوربو تکرار، وگرنه خطای واضح.
-                    try:
-                        _pv = await _pg.evaluate(
-                            "(s) => { const el = document.querySelector(s); return el ? (el.value || '') : null; }",
-                            _prc_sel,
-                        )
-                    except BaseException:
-                        _pv = None
-                    if _pv is None or str(_pv).strip() == "":
+                    _need_fill_prc = True
+                    if _att > 1:
                         try:
-                            _loc2 = await _playback_first_visible_locator(
-                                _pg, _prc_sel, timeout_ms=5000, turbo=False, selectors=_prc_sels,
-                            )
-                            await _playback_fill_interact(
-                                _loc2, _prc_val, timeout_ms=8000, turbo=False,
-                            )
-                            _pv = await _pg.evaluate(
+                            _cur_p = await _pg.evaluate(
                                 "(s) => { const el = document.querySelector(s); return el ? (el.value || '') : null; }",
                                 _prc_sel,
+                            )
+                            if str(_cur_p or "").strip() == str(_prc_val).strip():
+                                _need_fill_prc = False
+                        except Exception:
+                            pass
+                    if _need_fill_prc:
+                        try:
+                            await _playback_fill_resilient(
+                                _pg, _prc_sel, _prc_val, timeout_ms=min(_att_tmo, 8000),
+                                show_marker=False, max_attempts=2, pause_between_attempts_s=0.5,
+                                cancel_check=cancel_check, progress_log=None, action_label="قیمت دلخواه",
+                                turbo=True, selectors=_prc_sels,
                             )
                         except PlaybackCancelled:
                             raise
                         except BaseException as exc:
-                            raise RuntimeError(f"تکرار درج قیمت ناموفق (تلاش {_att}): {exc}")
-                        if _pv is None or str(_pv).strip() == "":
-                            raise RuntimeError(
-                                f"قیمت در فیلد ننشست (تلاش {_att})؛ مقدار فعلی: «{_pv}»."
+                            raise RuntimeError(f"فیلد قیمت در دسترس نیست (تلاش {_att}): {exc}")
+                        # راستی‌آزمایی: مقدار واقعاً نشسته باشد (پرکردن بی‌صدا قبول نیست)؛
+                        # اگر نه، یک بار با مسیر غیرتوربو تکرار، وگرنه خطای واضح.
+                        try:
+                            _pv = await _pg.evaluate(
+                                "(s) => { const el = document.querySelector(s); return el ? (el.value || '') : null; }",
+                                _prc_sel,
                             )
-                    log_lines.append(f"قیمت دلخواه درج شد: {_prc_val}")
+                        except BaseException:
+                            _pv = None
+                        if _pv is None or str(_pv).strip() == "":
+                            try:
+                                _loc2 = await _playback_first_visible_locator(
+                                    _pg, _prc_sel, timeout_ms=5000, turbo=False, selectors=_prc_sels,
+                                )
+                                await _playback_fill_interact(
+                                    _loc2, _prc_val, timeout_ms=8000, turbo=False,
+                                )
+                                _pv = await _pg.evaluate(
+                                    "(s) => { const el = document.querySelector(s); return el ? (el.value || '') : null; }",
+                                    _prc_sel,
+                                )
+                            except PlaybackCancelled:
+                                raise
+                            except BaseException as exc:
+                                raise RuntimeError(f"تکرار درج قیمت ناموفق (تلاش {_att}): {exc}")
+                            if _pv is None or str(_pv).strip() == "":
+                                raise RuntimeError(
+                                    f"قیمت در فیلد ننشست (تلاش {_att})؛ مقدار فعلی: «{_pv}»."
+                                )
+                        log_lines.append(f"قیمت دلخواه درج شد: {_prc_val}")
                 elif _max_sel:
                     try:
                         await _playback_click_resilient(
@@ -3412,6 +3485,24 @@ async def run_scenario_steps(
                         raise
                     except BaseException:
                         pass
+
+                # انتظار برای زمان هدف (سرخطی / Timer)
+                if _te is not None and _att == 1:
+                    wait_until_target = _te - time.time()
+                    if wait_until_target > 1.5:
+                        log_lines.append(
+                            f"⏳ استقرار در فرم سفارش تکمیل شد. در انتظار ثانیه هدف ({time.strftime('%H:%M:%S', time.localtime(_te))}) — {int(wait_until_target)} ثانیه صبر…"
+                        )
+                        await _sleep_cancellable(wait_until_target - 1.0, cancel_check)
+                    while time.time() < _te:
+                        if cancel_check and await cancel_check():
+                            raise PlaybackCancelled("اجرای سناریو با توقف شما متوقف شد.")
+                        rem = _te - time.time()
+                        if rem > 0.05:
+                            await asyncio.sleep(min(rem - 0.01, 0.05))
+                        else:
+                            await asyncio.sleep(0.005)
+
                 try:
                     await _playback_click_resilient(
                         _pg, _sub_sel, timeout_ms=_att_tmo,
@@ -3424,11 +3515,16 @@ async def run_scenario_steps(
                     raise
                 except BaseException as exc:
                     raise RuntimeError(f"دکمه ارسال یافت نشد (تلاش {_att}): {exc}")
+
+                _is_around_target = bool(_te is not None and time.time() <= _te + 30.0)
                 try:
-                    await _pg.wait_for_load_state("networkidle", timeout=int(_set_s * 1000) if _set_s > 0 else 1000)
+                    await _pg.wait_for_load_state(
+                        "networkidle",
+                        timeout=int((0.5 if _is_around_target else _set_s) * 1000) if (_is_around_target or _set_s > 0) else 1000,
+                    )
                 except BaseException:
                     pass
-                await _sleep_cancellable(1.5, cancel_check)
+                await _sleep_cancellable(0.2 if _is_around_target else 1.5, cancel_check)
                 _body1 = ""
                 _url1 = ""
                 for _snap_try in range(2):
@@ -3439,10 +3535,10 @@ async def run_scenario_steps(
                         ))
                     except BaseException:
                         _body1 = ""
-                    if any(k in _body1 for k in _suc) or any(k in _body1 for k in _fat):
+                    if any(k in _body1 for k in _suc) or any(k in _body1 for k in _fat) or any(k in _body1 for k in _ret):
                         break
                     if _snap_try == 0:
-                        await _sleep_cancellable(3.0, cancel_check)
+                        await _sleep_cancellable(0.5 if _is_around_target else 3.0, cancel_check)
                 if "login" in _url1.lower():
                     raise RuntimeError("نشست منقضی شد (برگشت به صفحه ورود)؛ لطفاً دوباره اجرا کنید.")
                 _hit_f = next((k for k in _fat if k in _body1), None)
@@ -3460,8 +3556,15 @@ async def run_scenario_steps(
                 _why = f"«{_hit_r}»" if _hit_r else "پیام ناشناخته"
                 if _att >= _max_att:
                     raise RuntimeError(f"پس از {_max_att} تلاش ثبت نشد. آخرین وضعیت: {_why}")
-                log_lines.append(f"⏳ تلاش {_att}/{_max_att} ناموفق ({_why})؛ {_wait_s:.0f} ثانیه صبر…")
-                await _sleep_cancellable(_wait_s, cancel_check)
+
+                _eff_wait = _wait_s
+                if _te is not None and time.time() <= _te + 30.0:
+                    if ("خارج از ساعت" in _body1) or (_hit_r and any(m in str(_hit_r) for m in ("خارج از ساعت", "ساعت معاملات", "بازه زمانی"))):
+                        _eff_wait = 0.4
+
+                _wait_disp = f"{_eff_wait:.1f}" if _eff_wait < 1.0 else f"{_eff_wait:.0f}"
+                log_lines.append(f"⏳ تلاش {_att}/{_max_att} ناموفق ({_why})؛ {_wait_disp} ثانیه صبر…")
+                await _sleep_cancellable(_eff_wait, cancel_check)
             if not _confirmed:
                 raise RuntimeError("حلقه ارسال بدون تأیید پایان یافت.")
             log_lines.append("click ارسال خرید (تأییدشده)")
@@ -4074,7 +4177,7 @@ async def run_playback(
                     shutil.rmtree(playback_profile_dir, ignore_errors=True)
                     raise
             browser = context.browser
-            _pp = context.pages
+            _pp = [p for p in context.pages if not p.is_closed()]
             page_holder: list[Any] = [_pp[0]] if _pp else [await context.new_page()]
 
             # شنود خطاهای کنسول/صفحه برای علت‌یابی خرابی‌ها (آخرین ۳۰ مورد نگه داشته می‌شود).
@@ -4387,7 +4490,7 @@ async def run_playback(
                 keep_open = _coerce_keep_browser_on_failure(scenario.get("keep_browser_on_failure")) or keep_open_on_missing
                 close_browser_when_done = not keep_open
             finally:
-                if can_reuse and scenario_reached_end and _is_context_alive(context):
+                if can_reuse and _is_context_alive(context):
                     _playback_shared_context = context
                     _playback_shared_profile_dir = playback_profile_dir
                     close_browser_when_done = False

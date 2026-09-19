@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from config_store import load_config, save_config
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import license as lic
 from monitor import (
     bale_send_async,
@@ -766,6 +766,42 @@ class EasyTraderBuyBody(BaseModel):
     submit_wait_s: float = 45
     price_mode: str = "max"
     price_value: str = ""
+    target_time: str = ""
+    target_epoch: float | None = None
+
+
+def parse_target_epoch(target_time: str = "", target_epoch: float | None = None) -> float | None:
+    """تبدیل زمان هدف (ISO یا فرمت ساعت HH:MM:SS / HH:MM) یا عدد epoch به تایم‌استمپ ثانیه‌ای."""
+    if target_epoch is not None:
+        try:
+            val = float(target_epoch)
+            if val > 0:
+                return val
+        except (ValueError, TypeError):
+            pass
+    if not target_time or not str(target_time).strip():
+        return None
+    s = str(target_time).strip()
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt.timestamp()
+    except Exception:
+        pass
+    parts = s.split(":")
+    if len(parts) in (2, 3):
+        try:
+            h = int(parts[0])
+            m = int(parts[1])
+            sec = int(parts[2]) if len(parts) == 3 else 0
+            tz = getattr(lic, "TEHRAN", None)
+            now = datetime.now(tz) if tz else datetime.now()
+            target_dt = now.replace(hour=h, minute=m, second=sec, microsecond=0)
+            if target_dt.timestamp() < (now.timestamp() - 7200):
+                target_dt += timedelta(days=1)
+            return target_dt.timestamp()
+        except Exception:
+            pass
+    return None
 
 
 def compose_easytrader_scenario(
@@ -780,6 +816,7 @@ def compose_easytrader_scenario(
     submit_wait_s: float = 45,
     price_mode: str = "max",
     price_value: str = "",
+    target_epoch: float | None = None,
 ) -> dict[str, Any]:
     """ساخت خودکار سناریوی خرید در ایزی‌تریدر (مفید) همراه با فال‌بک سلکتورها و مدیریت پاپ‌آپ و خرید آزمایشی."""
     qty_str = str(qty).strip()
@@ -792,6 +829,7 @@ def compose_easytrader_scenario(
             "type": "goto",
             "url": "https://m.easytrader.ir/",
             "entry_url_base": "https://m.easytrader.ir/",
+            "skip_if_url_contains": "m.easytrader.ir",
             "delay_ms": 0,
             "timeout_ms": 30000,
         },
@@ -799,6 +837,7 @@ def compose_easytrader_scenario(
         {
             "id": "fill_username",
             "type": "fill",
+            "only_if_url_contains": "login.emofid.com",
             "selector": "#user-name",
             "selectors": [
                 "#user-name",
@@ -816,6 +855,7 @@ def compose_easytrader_scenario(
         {
             "id": "fill_password",
             "type": "fill",
+            "only_if_url_contains": "login.emofid.com",
             "selector": "#password",
             "selectors": [
                 "#password",
@@ -833,6 +873,7 @@ def compose_easytrader_scenario(
         {
             "id": "clk_login_submit",
             "type": "click",
+            "only_if_url_contains": "login.emofid.com",
             "selector": "#primary_form button[type='submit']",
             "selectors": [
                 "#primary_form button[type='submit']",
@@ -848,9 +889,10 @@ def compose_easytrader_scenario(
         {
             "id": "verify_login",
             "type": "expect_url",
+            "only_if_url_contains": "login.emofid.com",
             "contains": "m.easytrader.ir",
             "not_contains": "login.emofid.com/Login,auth-callback",
-            "label": "تأیيد ورود به پنل",
+            "label": "تأیید ورود به پنل",
             "timeout_ms": 40000,
         },
         # ۶. بستن پاپ‌آپ اطلاعیه در صورت نمایش در پنل (اختیاری - سریع بدون مکث)
@@ -901,6 +943,7 @@ def compose_easytrader_scenario(
                 "button:has-text('جستجو')",
                 "[aria-label*='جستجو']",
             ],
+            "skip_if_url_contains": "/search",
             "delay_ms": 0,
             "timeout_ms": 15000,
         },
@@ -1216,6 +1259,7 @@ def compose_easytrader_scenario(
                     "max_attempts": submit_max_attempts,
                     "wait_s": submit_wait_s,
                     "settle_s": 6,
+                    "target_epoch": target_epoch,
                     "delay_ms": 0,
                     "timeout_ms": 15000,
                 }
@@ -1238,6 +1282,8 @@ def compose_easytrader_scenario(
         "entry_url_base": "https://m.easytrader.ir/",
         "turbo_mode": turbo_mode,
         "turbo_refresh": False,
+        "reuse_browser": True,
+        "keep_browser_open": True,
         # ریکاوری هوشمند: پس از خطا رفرش + ادامه از قدم متناظر با آدرس فعلی.
         # دکمه نهایی خرید عمداً مارکر ندارد تا هرگز دوباره ارسال نشود.
         "recovery_max": 2,
@@ -1263,8 +1309,6 @@ def compose_easytrader_scenario(
     }
 
     if dry_run:
-        scenario["keep_browser_open"] = True
-        scenario["reuse_browser"] = True
         scenario["keep_browser_on_failure"] = True
 
     return scenario
@@ -1298,6 +1342,8 @@ async def easytrader_buy(body: EasyTraderBuyBody) -> dict[str, Any]:
     async def cancel_check() -> bool:
         return cancel_evt.is_set()
 
+    effective_target_epoch = parse_target_epoch(body.target_time, body.target_epoch)
+
     scenario = compose_easytrader_scenario(
         username=username,
         password=password,
@@ -1310,6 +1356,7 @@ async def easytrader_buy(body: EasyTraderBuyBody) -> dict[str, Any]:
         submit_wait_s=min(max(float(body.submit_wait_s or 45), 5.0), 300.0),
         price_mode=price_mode,
         price_value=price_value,
+        target_epoch=effective_target_epoch,
     )
 
     try:
@@ -1331,6 +1378,12 @@ async def easytrader_buy(body: EasyTraderBuyBody) -> dict[str, Any]:
         "cancellation_id": cancel_id,
         **result,
     }
+
+
+@app.post("/api/easytrader/reset_session")
+async def easytrader_reset_session() -> dict[str, Any]:
+    closed = await automation.reset_shared_playback_context()
+    return {"ok": True, "closed": closed}
 
 
 @app.post("/api/easytrader/cancel")

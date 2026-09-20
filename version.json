@@ -1,5 +1,6 @@
 {
   "version": "14.0",
   "updated_at": "2026-09-19",
-  "notes": "تایمر زمان‌بندی سرخطی (شروع ۵ دقیقه زودتر برای آماده‌سازی و شلیک در رأس ثانیه) + نشست پایدار مرورگر در صف خرید بدون لاگین مجدد"
+  "notes": "تایمر زمان‌بندی سرخطی (شروع ۵ دقیقه زودتر برای آماده‌سازی و شلیک در رأس ثانیه) + نشست پایدار مرورگر در صف خرید بدون لاگین مجدد",
+  "zip_url": "https://raw.githubusercontent.com/AxisRebellious/SiteWorkflowAssistant/main/dist/SiteWorkflowAssistant_Update.zip"
 }

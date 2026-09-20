@@ -1467,37 +1467,55 @@ async def update_apply() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"بررسی آپدیت ناموفق بود: {exc}")
     if not info.get("available"):
         return {"ok": True, "message": "نرم‌افزار به‌روز است."}
+    zip_url = info.get("zip_url")
+    if not zip_url:
+        raise HTTPException(status_code=500, detail="آدرس بسته به‌روزرسانی یافت نشد.")
+
+    dest_zip = ROOT / "data" / "update_stage.zip"
+    stage_dir = ROOT / "data" / "update_stage"
+
+    # دانلود و استخراج استیج پیش از بستن سرور (تا در صورت قطعی اینترنت برنامه بسته نشود)
+    try:
+        import shutil
+        import zipfile
+
+        updater.download_update(zip_url, dest_zip)
+        if stage_dir.exists():
+            shutil.rmtree(stage_dir, ignore_errors=True)
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(dest_zip, "r") as zf:
+            zf.extractall(stage_dir)
+        valid, reason = updater.verify_stage(stage_dir)
+        if not valid:
+            raise RuntimeError(f"اعتبارسنجی بسته ناموفق بود: {reason}")
+    except Exception as exc:
+        log.exception("خطا در آماده‌سازی به‌روزرسانی")
+        raise HTTPException(status_code=500, detail=f"خطا در دانلود یا اعتبارسنجی بسته به‌روزرسانی: {exc}")
+
     try:
         last_port = (ROOT / "data" / "last_port.txt").read_text(encoding="utf-8").strip()
         port = int(last_port) if last_port.isdigit() else 9876
     except Exception:
         port = 9876
+
     try:
-        if os.name == "nt":
-            subprocess.Popen(
-                [sys.executable, "updater.py", "--full-update", "--port", str(port)],
-                cwd=str(ROOT),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=0x00000008,
-            )
-        else:
-            subprocess.Popen(
-                [sys.executable, "updater.py", "--full-update", "--port", str(port)],
-                cwd=str(ROOT),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+        flags = 0x00000008 if os.name == "nt" else 0
+        subprocess.Popen(
+            [sys.executable, "updater.py", "--apply-staged", "--port", str(port)],
+            cwd=str(ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+        )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"شروع آپدیت ناموفق بود: {exc}")
+        raise HTTPException(status_code=500, detail=f"راه‌اندازی فرآیند نصب ناموفق بود: {exc}")
 
     async def _suicide() -> None:
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
         os._exit(0)
 
     asyncio.create_task(_suicide())
-    return {"ok": True, "message": "آپدیت شروع شد؛ برنامه خودش بسته و با نسخه جدید باز می‌شود."}
+    return {"ok": True, "message": "بسته با موفقیت دریافت و تأیید شد؛ در حال اعمال و راه‌اندازی مجدد نرم‌افزار..."}
 
 
 @app.get("/easytrader")

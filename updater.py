@@ -236,6 +236,7 @@ def _resilient_urlopen(url_or_req: Any, timeout: int = 15) -> Any:
 def _pinned_open(url_or_req: Any, url: str, ips: list[str], timeout: int) -> Any:
     """باز کردن URL با اتصال مستقیم به یکی از IPها + دنبال‌کردن دستی ریدایرکت (تا ۵ پرش)."""
     import http.client
+    import socket
     import urllib.parse
 
     if hasattr(url_or_req, "header_items"):
@@ -255,11 +256,29 @@ def _pinned_open(url_or_req: Any, url: str, ips: list[str], timeout: int) -> Any
         if parts.query:
             path += "?" + parts.query
         port = parts.port or (443 if parts.scheme == "https" else 80)
+        host = parts.hostname or ""
+
+        # دریافت آدرس‌های IP هاست فعلی این پرش (سامانه محلی + DoH برای عبور از فیلترینگ DNS)
+        cur_ips: list[str] = []
+        if host:
+            try:
+                for ai in socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM):
+                    ip_str = ai[4][0]
+                    if ip_str not in cur_ips:
+                        cur_ips.append(ip_str)
+            except Exception:
+                pass
+            for doh_ip in _doh_resolve_ips(host):
+                if doh_ip not in cur_ips:
+                    cur_ips.append(doh_ip)
+        if not cur_ips:
+            cur_ips = ips
+
         ok = False
-        for ip in ips:
+        for ip in cur_ips:
             try:
                 if parts.scheme == "https":
-                    conn: Any = _SniPinnedHTTPSConnection(parts.hostname or "", port, timeout=timeout)
+                    conn: Any = _SniPinnedHTTPSConnection(host, port, timeout=timeout)
                     conn._pin_ip = ip
                 else:
                     conn = http.client.HTTPConnection(ip, port, timeout=timeout)

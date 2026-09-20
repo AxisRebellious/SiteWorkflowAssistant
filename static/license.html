@@ -1577,11 +1577,11 @@
 
           if (res.status === 202 || res.ok) {
             // Accepted 202 -> App will restart itself
-            const restartNotice = "دانلود و نصب... برنامه خودش دوباره باز می‌شود، این صفحه را ببندید";
+            const restartNotice = "دانلود و نصب با موفقیت انجام شد؛ در حال اعمال فایل‌ها و راه‌اندازی مجدد...";
 
             if (updateProgress) {
               updateProgress.className = "update-progress-box update-progress-running";
-              let seconds = 15;
+              let seconds = 8;
               updateProgress.innerHTML = `
                 <div style="display: flex; align-items: flex-start; gap: 12px;">
                   <span class="btn-spinner" style="width: 22px; height: 22px; border-width: 3px; border-top-color: #10b981; margin-top: 2px;"></span>
@@ -1600,19 +1600,44 @@
                   if (seconds > 0) {
                     cdElem.textContent = `راه‌اندازی مجدد خودکار سامانه در ${seconds} ثانیه...`;
                   } else {
-                    cdElem.textContent = "در حال بازگشایی مجدد نرم‌افزار...";
+                    cdElem.textContent = "در حال بازگشایی مجدد و اتصال به برنامه...";
                     clearInterval(updateCountdownTimer);
+
+                    // بررسی وضعیت سرور جهت بازخوانی خودکار صفحه
+                    let pollTries = 0;
+                    const pollInterval = setInterval(async () => {
+                      pollTries++;
+                      try {
+                        const sRes = await fetch("/api/license/status?t=" + Date.now(), { cache: "no-store" });
+                        if (sRes.ok) {
+                          const sData = await sRes.json();
+                          if (sData && sData.ok) {
+                            clearInterval(pollInterval);
+                            cdElem.textContent = "سامانه با موفقیت به‌روزرسانی شد! در حال انتقال...";
+                            setTimeout(() => {
+                              window.location.reload();
+                            }, 800);
+                          }
+                        }
+                      } catch (e) {
+                        // سرور در حال ری‌استارت است
+                      }
+                      if (pollTries > 30) {
+                        clearInterval(pollInterval);
+                        cdElem.innerHTML = 'نرم‌افزار به‌روزرسانی شد. اگر صفحه خودکار باز نشد: <button type="button" class="btn-tactile btn-tactile-emerald" style="margin-top:6px;padding:6px 14px;font-size:0.85rem;" onclick="location.reload()">🔄 بازخوانی صفحه</button> (یا فایل START_APP.bat را مجدداً باز کنید).';
+                      }
+                    }, 1500);
                   }
                 }
               }, 1000);
             }
 
-            btnUpdateApply.innerHTML = '<span>⏳ در حال نصب و راه‌اندازی...</span>';
+            btnUpdateApply.innerHTML = '<span>⏳ در حال راه‌اندازی مجدد...</span>';
             // Both buttons remain disabled
             if (btnUpdateCheck) btnUpdateCheck.disabled = true;
             btnUpdateApply.disabled = true;
 
-            showToast("فرآیند به‌روزرسانی آغاز شد. برنامه به زودی راه‌اندازی مجدد خواهد شد.", true);
+            showToast("بسته با موفقیت دریافت شد و برنامه در حال راه‌اندازی مجدد است.", true);
           } else {
             // Other server error (500 etc)
             const errData = await res.json().catch(() => ({}));

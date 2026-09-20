@@ -709,7 +709,7 @@ def wait_port_free(host: str, port: int, timeout: float = 40.0, step: float = 1.
     return is_port_free(host, port)
 
 
-def launch_detached(root: Path) -> subprocess.Popen:
+def launch_detached(root: Path, port: int = 0) -> subprocess.Popen:
     """
     راه‌اندازی مستقل و جداگانه لانچر (launch.py) با استفاده از runtime/python/python.exe
     بدون باز شدن پنجره ترمینال و با قابلیت بقا پس از مرگ فرآیند والد.
@@ -728,6 +728,8 @@ def launch_detached(root: Path) -> subprocess.Popen:
 
     env = os.environ.copy()
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(root / "runtime" / "browsers")
+    if port > 0:
+        env["SWA_PORT"] = str(port)
 
     flags = 0
     if sys.platform == "win32":
@@ -783,7 +785,7 @@ def run_apply_staged_cli(root: Path, port: int, stage_dir: Path | None = None) -
         pass
 
     log_msg(root, "در حال راه‌اندازی مجدد برنامه به صورت کاملاً مستقل و detached...")
-    proc = launch_detached(root)
+    proc = launch_detached(root, port=port)
     log_msg(root, f"برنامه با موفقیت راه‌اندازی شد (PID: {proc.pid}). خروج از به‌روزرسان.")
 
 
@@ -887,7 +889,7 @@ def run_full_update_cli(root: Path, port: int) -> None:
 
     # راه‌اندازی مجدد بدون پنجره
     log_msg(root, "در حال راه‌اندازی مجدد برنامه به صورت کاملاً مستقل و detached...")
-    proc = launch_detached(root)
+    proc = launch_detached(root, port=port)
     log_msg(root, f"برنامه با موفقیت در پس‌زمینه راه‌اندازی شد (PID: {proc.pid}). خروج.")
     sys.exit(0)
 

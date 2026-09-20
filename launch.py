@@ -23,7 +23,23 @@ def pick_port() -> int:
     env_port = (os.environ.get("SWA_PORT") or "").strip()
     if env_port.isdigit():
         cands.append(int(env_port))
-    cands.extend(CANDIDATE_PORTS)
+
+    # اولویت با همان پورتی است که کاربر آخرین بار روی آن کار می‌کرده تا آدرس تغییر نکند
+    last_port_file = ROOT / "data" / "last_port.txt"
+    if last_port_file.is_file():
+        try:
+            lp = last_port_file.read_text(encoding="utf-8").strip()
+            if lp.isdigit():
+                lp_int = int(lp)
+                if lp_int not in cands:
+                    cands.append(lp_int)
+        except Exception:
+            pass
+
+    for p in CANDIDATE_PORTS:
+        if p not in cands:
+            cands.append(p)
+
     for port in cands:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -62,7 +78,10 @@ def main() -> None:
     except Exception:
         pass
     try:
-        webbrowser.open_new_tab(f"{url}?t={int(time.time())}")
+        if sys.platform == "win32":
+            subprocess.Popen(f'cmd.exe /c start "" "{url}?updated=1"', shell=True)
+        else:
+            webbrowser.open_new_tab(url)
     except Exception:
         try:
             webbrowser.open(url)

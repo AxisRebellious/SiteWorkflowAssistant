@@ -62,9 +62,12 @@ def main() -> None:
     except Exception:
         pass
     try:
-        webbrowser.open(url)
+        webbrowser.open_new_tab(f"{url}?t={int(time.time())}")
     except Exception:
-        pass
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
     print(f"READY {url}", flush=True)
     proc.wait()
 

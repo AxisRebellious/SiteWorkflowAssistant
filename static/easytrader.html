@@ -109,6 +109,17 @@
         box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
         background: rgba(0, 0, 0, 0.5);
       }
+      .schedule-drywarn {
+        display: none;
+        margin-top: 12px;
+        padding: 10px 14px;
+        border-radius: 8px;
+        background: rgba(245, 158, 11, 0.12);
+        border: 1px solid rgba(245, 158, 11, 0.35);
+        color: #fbbf24;
+        font-size: 0.88rem;
+        line-height: 1.6;
+      }
     </style>
   </head>
   <body>
@@ -207,6 +218,10 @@
               <input type="checkbox" id="et_schedule_enabled" />
               <span>⏱️ فعال‌سازی زمان‌بندی خودکار (شروع ۵ دقیقه زودتر برای آماده‌سازی)</span>
             </label>
+          </div>
+
+          <div id="et_schedule_drywarn" class="schedule-drywarn" style="display: none;">
+            ⚠️ حالت آزمایشی (Dry-Run) فعال است: با این تنظیم، بات تا فرم سفارش می‌رود اما دکمه «ارسال خرید» را نمی‌زند. برای خرید واقعی زمان‌بندی‌شده این گزینه را بردارید.
           </div>
 
           <div id="et_schedule_inputs_container" class="grid-2 spaced-top" style="display: none;">

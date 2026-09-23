@@ -859,7 +859,7 @@ def compose_easytrader_scenario(
             "url": entry_url,
             "entry_url_base": entry_url,
             "skip_if_url_contains": entry_skip,
-            "delay_ms": 0,
+            "delay_ms": 1500,
             "timeout_ms": 30000,
         },
         # ۲. نام کاربری

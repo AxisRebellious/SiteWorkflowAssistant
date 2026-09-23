@@ -3340,9 +3340,9 @@ async def run_scenario_steps(
             if not _suc:
                 _suc = ["ثبت شد", "ثبت سفارش", "موفق", "سفارش شما ثبت", "ارسال شد"]
             if not _ret:
-                _ret = ["خارج از ساعت", "بازه زمانی", "ساعت معاملات", "شروع معاملات", "تلاش مجدد"]
+                _ret = ["خارج از ساعت", "بازه زمانی", "محدوده زمانی", "ساعت معاملات", "شروع معاملات", "تلاش مجدد", "معتبر نمی‌باشد"]
             if not _fat:
-                _fat = ["موجودی", "اعتبار کافی نیست", "مسدود", "نامعتبر", "مجاز نیست"]
+                _fat = ["موجودی", "اعتبار کافی نیست", "مسدود", "مجاز نیست"]
             try:
                 _max_att = max(1, min(int(st.get("max_attempts") or 900), 2000))
             except Exception:
@@ -3490,9 +3490,11 @@ async def run_scenario_steps(
                 if _te is not None and _att == 1:
                     wait_until_target = _te - time.time()
                     if wait_until_target > 1.5:
-                        log_lines.append(
+                        _wait_msg = (
                             f"⏳ استقرار در فرم سفارش تکمیل شد. در انتظار ثانیه هدف ({time.strftime('%H:%M:%S', time.localtime(_te))}) — {int(wait_until_target)} ثانیه صبر…"
                         )
+                        log_lines.append(_wait_msg)
+                        get_playback_file_logger().info(_wait_msg)
                         await _sleep_cancellable(wait_until_target - 1.0, cancel_check)
                     while time.time() < _te:
                         if cancel_check and await cancel_check():
@@ -3502,6 +3504,10 @@ async def run_scenario_steps(
                             await asyncio.sleep(min(rem - 0.01, 0.05))
                         else:
                             await asyncio.sleep(0.005)
+
+                _clk_msg = f"🚀 کلیک دکمه ارسال خرید در زمان {time.strftime('%H:%M:%S', time.localtime(time.time()))} (هدف: {time.strftime('%H:%M:%S', time.localtime(_te)) if _te else '-'})"
+                log_lines.append(_clk_msg)
+                get_playback_file_logger().info(_clk_msg)
 
                 try:
                     await _playback_click_resilient(
@@ -3539,6 +3545,11 @@ async def run_scenario_steps(
                         break
                     if _snap_try == 0:
                         await _sleep_cancellable(0.5 if _is_around_target else 3.0, cancel_check)
+
+                _snap_json = json.dumps({"url": _url1, "body": _body1[:800]}, ensure_ascii=False)
+                get_playback_file_logger().info("📸 نتیجه ثبت سفارش: %s", _snap_json)
+                log_lines.append(f"📸 نتیجه ثبت سفارش: {_snap_json}")
+
                 if "login" in _url1.lower():
                     raise RuntimeError("نشست منقضی شد (برگشت به صفحه ورود)؛ لطفاً دوباره اجرا کنید.")
                 _hit_f = next((k for k in _fat if k in _body1), None)
@@ -3546,10 +3557,12 @@ async def run_scenario_steps(
                     raise RuntimeError(f"خطای قطعی سامانه (تلاش {_att}): «{_hit_f}» — تکرار فایده ندارد.")
                 if any(k in _body1 for k in _suc):
                     log_lines.append(f"✅ سفارش ثبت شد (تلاش {_att})")
+                    get_playback_file_logger().info(f"✅ سفارش ثبت شد (تلاش {_att})")
                     _confirmed = True
                     break
                 if "/order-form/" not in _url1:
                     log_lines.append(f"✅ ارسال انجام و صفحه عوض شد (تلاش {_att}): {_url1[:80]}")
+                    get_playback_file_logger().info(f"✅ ارسال انجام و صفحه عوض شد (تلاش {_att}): {_url1[:80]}")
                     _confirmed = True
                     break
                 _hit_r = next((k for k in _ret if k in _body1), None)
@@ -3559,11 +3572,13 @@ async def run_scenario_steps(
 
                 _eff_wait = _wait_s
                 if _te is not None and time.time() <= _te + 30.0:
-                    if ("خارج از ساعت" in _body1) or (_hit_r and any(m in str(_hit_r) for m in ("خارج از ساعت", "ساعت معاملات", "بازه زمانی"))):
+                    if ("خارج از ساعت" in _body1) or ("محدوده زمانی" in _body1) or (_hit_r and any(m in str(_hit_r) for m in ("خارج از ساعت", "ساعت معاملات", "بازه زمانی", "محدوده زمانی"))):
                         _eff_wait = 0.4
 
                 _wait_disp = f"{_eff_wait:.1f}" if _eff_wait < 1.0 else f"{_eff_wait:.0f}"
-                log_lines.append(f"⏳ تلاش {_att}/{_max_att} ناموفق ({_why})؛ {_wait_disp} ثانیه صبر…")
+                _retry_msg = f"⏳ تلاش {_att}/{_max_att} ناموفق ({_why})؛ {_wait_disp} ثانیه صبر…"
+                log_lines.append(_retry_msg)
+                get_playback_file_logger().info(_retry_msg)
                 await _sleep_cancellable(_eff_wait, cancel_check)
             if not _confirmed:
                 raise RuntimeError("حلقه ارسال بدون تأیید پایان یافت.")

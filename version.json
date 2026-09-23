@@ -1,6 +1,6 @@
 {
-  "version": "14.0",
-  "updated_at": "2026-09-19",
-  "notes": "تایمر زمان‌بندی سرخطی (شروع ۵ دقیقه زودتر برای آماده‌سازی و شلیک در رأس ثانیه) + نشست پایدار مرورگر در صف خرید بدون لاگین مجدد",
+  "version": "14.1",
+  "updated_at": "2026-09-23",
+  "notes": "هشدار و تأییدیه اجباری هنگام زمان‌بندی با حالت آزمایشی (Dry-Run) + نمایش صریح حالت در بنر و لاگ، تا دکمه «ارسال خرید» هرگز بی‌دلیل زده نشود",
   "zip_url": "https://raw.githubusercontent.com/AxisRebellious/SiteWorkflowAssistant/main/dist/SiteWorkflowAssistant_Update.zip"
 }

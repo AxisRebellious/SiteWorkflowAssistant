@@ -446,6 +446,10 @@
     const banner = el("et_schedule_banner");
     if (!banner) return;
     const countdownStr = formatCountdown(remainingMs);
+    const dryRun = el("et_dry_run")?.checked;
+    const modeChipHtml = dryRun
+      ? `<span class="badge badge-dry" style="margin-right: 6px;">حالت: آزمایشی</span>`
+      : `<span class="badge badge-turbo" style="margin-right: 6px;">حالت: واقعی</span>`;
     banner.innerHTML = `
       <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
         <div>
@@ -455,6 +459,8 @@
           <span>شروع آماده‌سازی در [<strong>${escapeHtml(wakeTimeStr)}</strong>]</span>
           <span style="opacity: 0.6; margin: 0 4px;">|</span>
           <span>مانده تا شروع: <span class="schedule-countdown">${countdownStr}</span></span>
+          <span style="opacity: 0.6; margin: 0 4px;">|</span>
+          ${modeChipHtml}
         </div>
         <button type="button" class="danger small" id="btn_banner_cancel" style="padding: 3px 10px; font-size: 0.8rem;">⏹️ لغو زمان‌بندی</button>
       </div>
@@ -490,6 +496,15 @@
     setRunningState("queue", false);
   }
 
+  function updateDryRunWarnings() {
+    const warnEl = el("et_schedule_drywarn");
+    const schedEnabled = Boolean(el("et_schedule_enabled")?.checked);
+    const dryRunChecked = Boolean(el("et_dry_run")?.checked);
+    if (warnEl) {
+      warnEl.style.display = (schedEnabled && dryRunChecked) ? "block" : "none";
+    }
+  }
+
   function initScheduleInputs() {
     const dateInput = el("et_schedule_date");
     const timeInput = el("et_schedule_time");
@@ -511,10 +526,13 @@
     if (enabledCheck && container) {
       const toggle = () => {
         container.style.display = enabledCheck.checked ? "grid" : "none";
+        updateDryRunWarnings();
       };
       enabledCheck.addEventListener("change", toggle);
       toggle();
     }
+
+    el("et_dry_run")?.addEventListener("change", updateDryRunWarnings);
   }
 
   function getScheduleSettings() {
@@ -599,6 +617,11 @@
     logAppend(`⏱️ زمان‌بندی هوشمند شروع خودکار فعال شد.`);
     logAppend(`🎯 زمان هدف سرخطی: ${targetTimeStr}`);
     logAppend(`🚀 زمان شروع آماده‌سازی (۵ دقیقه قبل): ${wakeTimeStr}`);
+    if (el("et_dry_run")?.checked) {
+      logAppend("⚠️ حالت آزمایشی: دکمه «ارسال خرید» در پایان زده نمی‌شود (فقط آماده‌سازی فرم).");
+    } else {
+      logAppend("✅ حالت خرید واقعی: دکمه «ارسال خرید» در ثانیه هدف زده می‌شود.");
+    }
     logAppend(`⏳ سامانه تا زمان آماده‌سازی در حالت انتظار معکوس قرار می‌گیرد...`);
     showToast(`زمان‌بندی فعال شد. شروع آماده‌سازی در ${wakeTimeStr}`, true);
 
@@ -799,6 +822,13 @@
       return;
     }
 
+    if (sched.enabled && el("et_dry_run")?.checked) {
+      const ok = confirm("زمان‌بندی با حالت آزمایشی فعال است؛ دکمه «ارسال خرید» زده نمی‌شود و سفارشی ثبت نخواهد شد.\n\nمی‌خواهید ادامه دهید؟");
+      if (!ok) {
+        return;
+      }
+    }
+
     if (sched.enabled) {
       const now = Date.now();
       if (now < sched.T_wake) {
@@ -973,6 +1003,13 @@
       return;
     }
 
+    if (sched.enabled && el("et_dry_run")?.checked) {
+      const ok = confirm("زمان‌بندی با حالت آزمایشی فعال است؛ دکمه «ارسال خرید» زده نمی‌شود و سفارشی ثبت نخواهد شد.\n\nمی‌خواهید ادامه دهید؟");
+      if (!ok) {
+        return;
+      }
+    }
+
     if (sched.enabled) {
       const now = Date.now();
       if (now < sched.T_wake) {
@@ -1060,6 +1097,7 @@
   window.addEventListener("DOMContentLoaded", () => {
     // Initialize Schedule Inputs
     initScheduleInputs();
+    updateDryRunWarnings();
 
     // Buttons
     el("btn_buy_single")?.addEventListener("click", handleSingleBuy);

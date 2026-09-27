@@ -1622,7 +1622,7 @@
                       } catch (e) {
                         // سرور در حال ری‌استارت است
                       }
-                      if (pollTries > 30) {
+                      if (pollTries > 60) {
                         clearInterval(pollInterval);
                         cdElem.innerHTML = 'نرم‌افزار به‌روزرسانی شد. اگر صفحه خودکار باز نشد: <button type="button" class="btn-tactile btn-tactile-emerald" style="margin-top:6px;padding:6px 14px;font-size:0.85rem;" onclick="location.reload()">🔄 بازخوانی صفحه</button> (یا فایل START_APP.bat را مجدداً باز کنید).';
                       }

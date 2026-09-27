@@ -31,6 +31,13 @@ import automation
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 
+# هدرهای ضد-کش برای صفحات اپلیکیشن: پس از آپدیت، تب مرورگر هرگز پوسته قدیمی نشان نمی‌دهد
+NO_CACHE_HEADERS: dict[str, str] = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("main")
 
@@ -1452,34 +1459,35 @@ async def update_check() -> dict[str, Any]:
 @app.post("/api/update/apply", status_code=202)
 async def update_apply() -> dict[str, Any]:
     import os
+    import shutil
     import subprocess
     import sys
-    import updater
+    import zipfile
 
     if len(playback_cancel_registry) > 0:
         raise HTTPException(
             status_code=409,
             detail="عملیاتی در حال اجراست؛ اول «توقف» بزن بعد آپدیت بگیر.",
         )
-    try:
+    import updater
+
+    # دانلود و استخراج بسته در ترد جداگانه تا حلقه رویداد (event loop) هرگز فریز نشود
+    # و پاسخ‌های دیگر سرور (مثل هارت‌بیت مرورگر) حین اینترنت کند قطع نشود.
+    def _stage_bundle() -> str:
         info = updater.check_update(ROOT)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"بررسی آپدیت ناموفق بود: {exc}")
-    if not info.get("available"):
-        return {"ok": True, "message": "نرم‌افزار به‌روز است."}
-    zip_url = info.get("zip_url")
-    if not zip_url:
-        raise HTTPException(status_code=500, detail="آدرس بسته به‌روزرسانی یافت نشد.")
-
-    dest_zip = ROOT / "data" / "update_stage.zip"
-    stage_dir = ROOT / "data" / "update_stage"
-
-    # دانلود و استخراج استیج پیش از بستن سرور (تا در صورت قطعی اینترنت برنامه بسته نشود)
-    try:
-        import shutil
-        import zipfile
-
-        updater.download_update(zip_url, dest_zip)
+        if not info.get("available"):
+            return ""
+        zip_url = info.get("zip_url")
+        if not zip_url:
+            raise RuntimeError("آدرس بسته به‌روزرسانی یافت نشد.")
+        dest_zip = ROOT / "data" / "update_stage.zip"
+        stage_dir = ROOT / "data" / "update_stage"
+        _, used = updater.download_update_best(
+            zip_url,
+            dest_zip,
+            version=str(info.get("latest") or ""),
+            log=lambda m: log.info("آپدیت: %s", m),
+        )
         if stage_dir.exists():
             shutil.rmtree(stage_dir, ignore_errors=True)
         stage_dir.mkdir(parents=True, exist_ok=True)
@@ -1488,6 +1496,22 @@ async def update_apply() -> dict[str, Any]:
         valid, reason = updater.verify_stage(stage_dir)
         if not valid:
             raise RuntimeError(f"اعتبارسنجی بسته ناموفق بود: {reason}")
+        return used
+
+    try:
+        # ۱. بررسی نسخه (سریع، بدون شبکه سنگین) — اگر به‌روز باشد همان‌جا برمی‌گردیم
+        try:
+            info = updater.check_update(ROOT)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"بررسی آپدیت ناموفق بود: {exc}")
+        if not info.get("available"):
+            return {"ok": True, "message": "نرم‌افزار به‌روز است."}
+        # ۲. دانلود+استخراج+اعتبارسنجی در ترد پس‌زمینه (غیر-بلوک)
+        used_url = await asyncio.to_thread(_stage_bundle)
+        if used_url:
+            log.info("بسته آپدیت از آینه دریافت شد: %s", used_url)
+    except HTTPException:
+        raise
     except Exception as exc:
         log.exception("خطا در آماده‌سازی به‌روزرسانی")
         raise HTTPException(status_code=500, detail=f"خطا در دانلود یا اعتبارسنجی بسته به‌روزرسانی: {exc}")
@@ -1520,16 +1544,19 @@ async def update_apply() -> dict[str, Any]:
 
 @app.get("/easytrader")
 async def easytrader_page() -> FileResponse:
-    return FileResponse(str(STATIC / "easytrader.html"))
+    return FileResponse(
+        str(STATIC / "easytrader.html"),
+        headers=NO_CACHE_HEADERS,
+    )
 
 
 @app.get("/panel")
 async def panel_page() -> FileResponse:
-    return FileResponse(str(STATIC / "index.html"))
+    return FileResponse(str(STATIC / "index.html"), headers=NO_CACHE_HEADERS)
 
 
 @app.get("/license")
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(str(STATIC / "license.html"))
+    return FileResponse(str(STATIC / "license.html"), headers=NO_CACHE_HEADERS)
 

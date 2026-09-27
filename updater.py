@@ -494,6 +494,83 @@ def download_update(
     return dest
 
 
+def candidate_urls(zip_url: str, version: str = "") -> list[str]:
+    """
+    ساخت زنجیره آینه‌های دانلود برای یک zip_url.
+    ترتیب: آدرس اصلی → آینه jsDelivr (عبور از اختلالات اپراتورهای داخلی) → دارایی ریلیز گیت‌هاب.
+    برای آدرس‌های غیر-HTTP یا غیر-قابل‌اشتقاق، فقط آدرس اصلی برمی‌گردد.
+    """
+    urls: list[str] = []
+    if zip_url and zip_url.strip():
+        primary = zip_url.strip()
+        urls.append(primary)
+
+        # آینه jsDelivr از آدرس raw.githubusercontent.com
+        try:
+            p = urllib.parse.urlsplit(primary)
+            if p.hostname == "raw.githubusercontent.com":
+                segs = [s for s in p.path.split("/") if s]
+                if len(segs) >= 4:  # owner/repo/branch/path...
+                    owner, repo, branch = segs[0], segs[1], segs[2]
+                    rest = "/".join(segs[3:])
+                    urls.append(f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{rest}")
+        except Exception:
+            pass
+
+        # دارایی ریلیز گیت‌هاب (آخرین خط دفاع)
+        ver = (version or "").strip().lstrip("v")
+        if re.match(r"^\d+(\.\d+)*$", ver):
+            m = re.match(r"https://raw\.githubusercontent\.com/([^/]+/[^/]+)/", primary)
+            repo_slug = m.group(1) if m else ""
+            if not repo_slug:
+                m2 = re.match(r"https://github\.com/([^/]+/[^/]+)/", primary)
+                repo_slug = m2.group(1) if m2 else ""
+            if repo_slug:
+                urls.append(
+                    f"https://github.com/{repo_slug}/releases/download/v{ver}/SiteWorkflowAssistant_Update.zip"
+                )
+
+    # حذف تکراری‌ها با حفظ ترتیب
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for u in urls:
+        if u and u not in seen:
+            seen.add(u)
+            ordered.append(u)
+    return ordered or [zip_url]
+
+
+def download_update_best(
+    zip_url: str,
+    dest_path: str | Path,
+    version: str = "",
+    progress_cb: Callable[[int, int | None], None] | None = None,
+    min_size: int = MIN_UPDATE_ZIP_SIZE,
+    log: Callable[[str], None] | None = None,
+) -> tuple[Path, str]:
+    """
+    دانلود با آینه‌های پشتیبان: هر آینه‌ای که شکست بخورد جایگزین می‌شود.
+    خروجی: (dest_path, used_url). پس از شکست همه آینه‌ها خطا با لیست کامل دلایل raise می‌شود.
+    """
+    candidates = candidate_urls(zip_url, version)
+    errors: list[str] = []
+    for idx, url in enumerate(candidates, start=1):
+        try:
+            if log is not None and len(candidates) > 1:
+                log(f"تلاش دانلود از آینه {idx}/{len(candidates)}: {url}")
+            dest = download_update(url, dest_path, progress_cb=progress_cb, min_size=min_size)
+            if log is not None and idx > 1:
+                log(f"دانلود از آینه {idx} با موفقیت انجام شد: {url}")
+            return dest, url
+        except Exception as exc:
+            errors.append(f"{url} → {exc}")
+            if log is not None:
+                log(f"شکست آینه {idx}/{len(candidates)}: {url} ({exc})")
+    raise RuntimeError(
+        "دانلود بسته از همه آینه‌ها ناموفق بود:\n" + "\n".join(f"  - {e}" for e in errors)
+    )
+
+
 def find_stage_root(stage_dir: Path) -> Path:
     """
     بررسی پوشه استیج و یافتن ریشه واقعی کدها؛
@@ -751,20 +828,63 @@ def launch_detached(root: Path, port: int = 0) -> subprocess.Popen:
     return proc
 
 
+def _find_listener_pid(port: int) -> int | None:
+    """یافتن PID گوش‌دهنده روی 127.0.0.1:PORT در ویندوز از طریق netstat."""
+    try:
+        out = subprocess.run(
+            ["netstat", "-ano"], capture_output=True, timeout=20
+        ).stdout.decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and parts[0] == "TCP":
+            local = parts[1]
+            state = parts[3]
+            if state == "LISTENING" and local.endswith(f":{port}") and "127.0.0.1" in local:
+                try:
+                    pid = int(parts[4])
+                    if pid > 0:
+                        return pid
+                except ValueError:
+                    continue
+    return None
+
+
 def run_apply_staged_cli(root: Path, port: int, stage_dir: Path | None = None) -> None:
     """
     حالت CLI:
     python updater.py --apply-staged --port PORT
-    صبر تا آزاد شدن پورت (تا ۴۰ ثانیه)، اعتبارسنجی استیج، اعمال فایل‌ها و راه‌اندازی detached لانچر.
+    صبر تا آزاد شدن پورت (تا ۱۵ ثانیه) + پاک‌سازی اجباری پروسه زامبی،
+    اعتبارسنجی استیج، اعمال فایل‌ها و راه‌اندازی detached لانچر.
     """
     log_msg(root, f"شروع عملیات اعمال استیج (پورت: {port})...")
 
     if port > 0:
-        log_msg(root, f"در حال انتظار برای آزاد شدن پورت {port} (تا ۴۰ ثانیه)...")
-        if not wait_port_free("127.0.0.1", port, timeout=40.0):
-            err = f"پورت {port} پس از ۴۰ ثانیه آزاد نشد. فرآیند قبلی هنوز فعال است."
-            log_msg(root, err, level="ERROR")
-            raise RuntimeError(err)
+        log_msg(root, f"در حال انتظار برای آزاد شدن پورت {port} (تا ۱۵ ثانیه)...")
+        if not wait_port_free("127.0.0.1", port, timeout=15.0, step=0.5):
+            # پاک‌سازی اجباری: پروسه‌ای که پورت را نگه داشته (زامبی/TIME_WAIT listener) را می‌کُشیم
+            if sys.platform == "win32":
+                pid = _find_listener_pid(port)
+                if pid and pid != os.getpid():
+                    log_msg(
+                        root,
+                        f"پورت {port} هنوز اشغال است (PID={pid})؛ پاک‌سازی اجباری پروسه زامبی...",
+                        level="WARNING",
+                    )
+                    try:
+                        subprocess.run(
+                            ["taskkill", "/F", "/PID", str(pid)],
+                            capture_output=True,
+                            timeout=15,
+                        )
+                    except Exception as exc:
+                        log_msg(root, f"taskkill ناموفق بود: {exc}", level="WARNING")
+                    time.sleep(1.5)
+            if not wait_port_free("127.0.0.1", port, timeout=10.0, step=0.5):
+                err = f"پورت {port} حتی پس از پاک‌سازی اجباری آزاد نشد. فرآیند قبلی هنوز فعال است."
+                log_msg(root, err, level="ERROR")
+                raise RuntimeError(err)
         log_msg(root, f"پورت {port} آزاد شد.")
 
     st_dir = stage_dir or (root / "data" / "update_stage")
@@ -840,7 +960,12 @@ def run_full_update_cli(root: Path, port: int) -> None:
                 log_msg(root, f"پیشرفت دریافت فایل: {mb_d:.2f}MB دریافت شد...")
 
     log_msg(root, f"شروع دانلود بسته به‌روزرسانی از: {zip_url}")
-    download_update(zip_url, dest_zip, progress_cb=_progress)
+    dest_zip, used_url = download_update_best(
+        zip_url, dest_zip, version=str(chk.get("latest") or ""),
+        progress_cb=_progress, log=lambda m: log_msg(root, m),
+    )
+    if used_url != zip_url:
+        log_msg(root, f"دانلود نهایی از آینه جایگزین انجام شد: {used_url}")
     log_msg(root, f"دانلود بسته به‌روزرسانی تکمیل شد: {dest_zip}")
 
     # استخراج فایل زیپ

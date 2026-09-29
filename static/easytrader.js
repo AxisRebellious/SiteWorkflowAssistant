@@ -11,6 +11,7 @@
 
   // State
   let activeCancelId = null;
+  let singleCancelRequested = false;
   let isSingleRunning = false;
   let isQueueRunning = false;
   let logPollInterval = null;
@@ -482,6 +483,7 @@
   }
 
   function cancelSchedule(reason = "توسط کاربر") {
+    singleCancelRequested = true;
     if (scheduleTimer) {
       clearInterval(scheduleTimer);
       scheduleTimer = null;
@@ -671,7 +673,7 @@
   async function executeBuyRequest(stock, qty, dryRun, cancelId, priceOpts, extraParams = {}) {
     const creds = getCredentials();
     const retryMaxRaw = parseInt((el("et_retry_max") || {}).value || "900", 10);
-    const retryWaitRaw = parseInt((el("et_retry_wait") || {}).value || "45", 10);
+    const retryWaitRaw = parseFloat((el("et_retry_wait") || {}).value || "45");
     const price = priceOpts && priceOpts.mode === "custom" ? { mode: "custom", value: priceOpts.value || "" } : { mode: "max", value: "" };
 
     // Persistent browser across operations
@@ -687,8 +689,8 @@
       dry_run: dryRun,
       turbo_mode: true,
       cancellation_id: cancelId,
-      submit_max_attempts: Math.max(1, Math.min(isNaN(retryMaxRaw) ? 900 : retryMaxRaw, 2000)),
-      submit_wait_s: Math.max(5, Math.min(isNaN(retryWaitRaw) ? 45 : retryWaitRaw, 300)),
+      submit_max_attempts: Math.max(1, Math.min(isNaN(retryMaxRaw) ? 900 : retryMaxRaw, 1000000)),
+      submit_wait_s: Math.max(0.001, Math.min(isNaN(retryWaitRaw) ? 45 : retryWaitRaw, 300)),
       keep_browser: keepBrowser,
     };
 
@@ -723,49 +725,118 @@
     const qty = el("et_qty").value.trim();
     const price = getPriceSettings();
     const dryRun = el("et_dry_run").checked;
+    const repeat = Math.max(1, Math.min(parseInt(el("et_qty_repeat")?.value || "1", 10) || 1, 100));
 
     activeCancelId = "et_run_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+    singleCancelRequested = false;
 
     setRunningState("single", true);
     const schedText = scheduleInfo ? ` | زمان‌بندی سرخطی: ${scheduleInfo.target_time}` : "";
-    logSet(`▶️ شروع خرید برای نماد: ${stock} | حجم: ${qty} | حالت: ${dryRun ? "آزمایشی (Dry-Run)" : "خرید واقعی"}${schedText}`);
+    const repeatText = repeat > 1 ? ` | تکرار: ${repeat} بار` : "";
+    logSet(`▶️ شروع خرید برای نماد: ${stock} | حجم: ${qty}${repeatText} | حالت: ${dryRun ? "آزمایشی (Dry-Run)" : "خرید واقعی"}${schedText}`);
     startLogPolling();
 
-    try {
-      const extraParams = {
-        keep_browser: true,
-        target_epoch: scheduleInfo ? scheduleInfo.target_epoch : undefined,
-        target_time: scheduleInfo ? scheduleInfo.target_time : undefined,
-      };
+    let completedOrders = 0;
+    let wasCancelled = false;
+    let fatalError = null;
+    let aggregatedResults = [];
 
-      const result = await executeBuyRequest(stock, qty, dryRun, activeCancelId, price, extraParams);
+    try {
+      for (let i = 1; i <= repeat; i++) {
+        if (singleCancelRequested) {
+          wasCancelled = true;
+          logAppend(`⏹️ عملیات پیش از سفارش ${i} از ${repeat} متوقف شد.`);
+          break;
+        }
+
+        if (repeat > 1) {
+          logAppend(`\n🔄 در حال ثبت سفارش ${i} از ${repeat} (نماد: ${stock} | حجم: ${qty})...`);
+        }
+
+        const extraParams = {
+          keep_browser: true,
+          target_epoch: (i === 1 && scheduleInfo) ? scheduleInfo.target_epoch : undefined,
+          target_time: (i === 1 && scheduleInfo) ? scheduleInfo.target_time : undefined,
+        };
+
+        let result;
+        try {
+          result = await executeBuyRequest(stock, qty, dryRun, activeCancelId, price, extraParams);
+        } catch (reqErr) {
+          if (singleCancelRequested || (reqErr.message && /cancel|لغو|توقف/i.test(reqErr.message))) {
+            wasCancelled = true;
+            logAppend(`⏹️ سفارش ${i} از ${repeat} با دستور توقف لغو شد.`);
+          } else {
+            fatalError = reqErr.message || "خطای ارتباط با سرور";
+            logAppend(`❌ خطا در سفارش ${i} از ${repeat}: ${fatalError}`);
+          }
+          break;
+        }
+
+        const resList = result?.results || [];
+        const hasError = resList.some((r) => r.ok === false);
+        const isCancelled = Boolean(result?.playback_cancelled);
+
+        resList.forEach((r) => aggregatedResults.push(r));
+
+        if (isCancelled || singleCancelRequested) {
+          wasCancelled = true;
+          logAppend(`⏹️ عملیات در سفارش ${i} از ${repeat} توسط کاربر متوقف شد.`);
+          break;
+        }
+
+        if (hasError) {
+          const firstErr = resList.find((r) => r.ok === false);
+          fatalError = firstErr ? firstErr.error || "خطای ناشناخته در مراحل سناریو" : "خطا در اجرا";
+          logAppend(`❌ خطا در مرحله سفارش ${i} از ${repeat}: ${fatalError}`);
+          break;
+        }
+
+        completedOrders++;
+        if (repeat > 1) {
+          logAppend(`✔️ سفارش ${i} از ${repeat} با موفقیت ثبت شد.`);
+        }
+      }
+
       stopLogPolling();
 
       // Check results
-      const resList = result.results || [];
-      const hasError = resList.some((r) => r.ok === false);
-      const isCancelled = Boolean(result.playback_cancelled);
-
-      if (isCancelled) {
-        showToast("اجرای خرید با دستور توقف لغو شد.", false);
+      if (wasCancelled) {
+        if (repeat > 1) {
+          showToast(`اجرای خرید با دستور توقف لغو شد (${completedOrders} از ${repeat} سفارش انجام شد).`, false);
+        } else {
+          showToast("اجرای خرید با دستور توقف لغو شد.", false);
+        }
         logAppend("⏹️ عملیات توسط کاربر متوقف شد.");
-      } else if (hasError) {
-        const firstErr = resList.find((r) => r.ok === false);
-        const errMsg = firstErr ? firstErr.error || "خطای ناشناخته در مراحل سناریو" : "خطا در اجرا";
-        showToast(`خطا در اجرای خرید: ${errMsg}`, false);
-        logAppend(`❌ خطا: ${errMsg}`);
+      } else if (fatalError) {
+        if (repeat > 1) {
+          showToast(`خطا در سفارش ${completedOrders + 1} از ${repeat}: ${fatalError}`, false);
+        } else {
+          showToast(`خطا در اجرای خرید: ${fatalError}`, false);
+        }
+        logAppend(`❌ خطا: ${fatalError}`);
       } else {
         if (dryRun) {
-          showToast(`خرید آزمایشی «${stock}» با موفقیت انجام شد و مرورگر باز ماند.`, true);
-          logAppend(`✅ خرید آزمایشی نماد «${stock}» با موفقیت تا انتخاب سقف قیمت انجام شد.`);
+          if (repeat > 1) {
+            showToast(`${repeat} خرید آزمایشی «${stock}» با موفقیت انجام شد و مرورگر باز ماند.`, true);
+            logAppend(`✅ هر ${repeat} سفارش خرید آزمایشی نماد «${stock}» با موفقیت تا انتخاب سقف قیمت انجام شد.`);
+          } else {
+            showToast(`خرید آزمایشی «${stock}» با موفقیت انجام شد و مرورگر باز ماند.`, true);
+            logAppend(`✅ خرید آزمایشی نماد «${stock}» با موفقیت تا انتخاب سقف قیمت انجام شد.`);
+          }
         } else {
-          showToast(`سفارش خرید نماد «${stock}» با موفقیت در ایزی‌تریدر ثبت شد!`, true);
-          logAppend(`🎉 سفارش خرید قطعی نماد «${stock}» با موفقیت ثبت نهایی شد.`);
+          if (repeat > 1) {
+            showToast(`هر ${repeat} سفارش خرید نماد «${stock}» با موفقیت در ایزی‌تریدر ثبت شد!`, true);
+            logAppend(`🎉 تمام ${repeat} سفارش خرید قطعی نماد «${stock}» با موفقیت ثبت نهایی شد.`);
+          } else {
+            showToast(`سفارش خرید نماد «${stock}» با موفقیت در ایزی‌تریدر ثبت شد!`, true);
+            logAppend(`🎉 سفارش خرید قطعی نماد «${stock}» با موفقیت ثبت نهایی شد.`);
+          }
         }
       }
 
       // Display final step logs if available
-      resList.forEach((r) => {
+      aggregatedResults.forEach((r) => {
         if (Array.isArray(r.log) && r.log.length > 0) {
           logAppend("\n--- مراحل اجرا ---");
           r.log.forEach((stepLog) => logAppend(stepLog));
@@ -777,6 +848,7 @@
       logAppend(`❌ خطای سرور: ${err.message}`);
     } finally {
       activeCancelId = null;
+      singleCancelRequested = false;
       hideScheduleBanner();
       setRunningState("single", false);
     }
@@ -860,6 +932,7 @@
 
   // Single Stop Click
   async function handleSingleStop() {
+    singleCancelRequested = true;
     if (isScheduledWaiting && scheduledMode === "single") {
       cancelSchedule("با دکمه توقف خرید");
       return;

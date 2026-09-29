@@ -3344,17 +3344,20 @@ async def run_scenario_steps(
             if not _fat:
                 _fat = ["موجودی", "اعتبار کافی نیست", "مسدود", "مجاز نیست"]
             try:
-                _max_att = max(1, min(int(st.get("max_attempts") or 900), 2000))
+                _max_att = max(1, min(int(st.get("max_attempts") or 900), 1_000_000))
             except Exception:
                 _max_att = 900
             try:
-                _wait_s = min(max(float(st.get("wait_s") or 45), 5.0), 300.0)
+                _wait_s = min(max(float(st.get("wait_s") or 45), 0.001), 300.0)
             except Exception:
                 _wait_s = 45.0
             try:
                 _set_s = min(max(float(st.get("settle_s") or 6), 0.0), 30.0)
             except Exception:
                 _set_s = 6.0
+            _rapid = _wait_s < 1.0
+            if _rapid:
+                _set_s = min(_set_s, 0.2)
             _sub_sel = (st.get("selector") or "").strip()
             _sub_sels = st.get("selectors")
             if not isinstance(_sub_sels, list):
@@ -3523,14 +3526,17 @@ async def run_scenario_steps(
                     raise RuntimeError(f"دکمه ارسال یافت نشد (تلاش {_att}): {exc}")
 
                 _is_around_target = bool(_te is not None and time.time() <= _te + 30.0)
+                _net_idle_tmo = int((0.5 if _is_around_target else _set_s) * 1000) if (_is_around_target or _set_s > 0) else 1000
+                if _rapid:
+                    _net_idle_tmo = min(_net_idle_tmo, 200)
                 try:
                     await _pg.wait_for_load_state(
                         "networkidle",
-                        timeout=int((0.5 if _is_around_target else _set_s) * 1000) if (_is_around_target or _set_s > 0) else 1000,
+                        timeout=_net_idle_tmo,
                     )
                 except BaseException:
                     pass
-                await _sleep_cancellable(0.2 if _is_around_target else 1.5, cancel_check)
+                await _sleep_cancellable(0.15 if _rapid else (0.2 if _is_around_target else 1.5), cancel_check)
                 _body1 = ""
                 _url1 = ""
                 for _snap_try in range(2):
@@ -3544,7 +3550,7 @@ async def run_scenario_steps(
                     if any(k in _body1 for k in _suc) or any(k in _body1 for k in _fat) or any(k in _body1 for k in _ret):
                         break
                     if _snap_try == 0:
-                        await _sleep_cancellable(0.5 if _is_around_target else 3.0, cancel_check)
+                        await _sleep_cancellable(0.15 if _rapid else (0.5 if _is_around_target else 3.0), cancel_check)
 
                 _snap_json = json.dumps({"url": _url1, "body": _body1[:800]}, ensure_ascii=False)
                 get_playback_file_logger().info("📸 نتیجه ثبت سفارش: %s", _snap_json)
@@ -3570,10 +3576,13 @@ async def run_scenario_steps(
                 if _att >= _max_att:
                     raise RuntimeError(f"پس از {_max_att} تلاش ثبت نشد. آخرین وضعیت: {_why}")
 
-                _eff_wait = _wait_s
+                if _rapid:
+                    _eff_wait = max(_wait_s, 0.05)
+                else:
+                    _eff_wait = _wait_s
                 if _te is not None and time.time() <= _te + 30.0:
                     if ("خارج از ساعت" in _body1) or ("محدوده زمانی" in _body1) or (_hit_r and any(m in str(_hit_r) for m in ("خارج از ساعت", "ساعت معاملات", "بازه زمانی", "محدوده زمانی"))):
-                        _eff_wait = 0.4
+                        _eff_wait = min(_eff_wait, 0.4) if _rapid else 0.4
 
                 _wait_disp = f"{_eff_wait:.1f}" if _eff_wait < 1.0 else f"{_eff_wait:.0f}"
                 _retry_msg = f"⏳ تلاش {_att}/{_max_att} ناموفق ({_why})؛ {_wait_disp} ثانیه صبر…"

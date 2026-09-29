@@ -120,6 +120,10 @@
         font-size: 0.88rem;
         line-height: 1.6;
       }
+      select option {
+        background: #1e293b;
+        color: var(--text-main);
+      }
     </style>
   </head>
   <body>
@@ -175,19 +179,34 @@
           <div class="field">
             <label for="et_qty">تعداد / حجم خرید</label>
             <input id="et_qty" type="number" min="1" step="1" placeholder="مثلاً ۱۰۰۰" />
+            <label for="et_qty_repeat" style="margin-top: 4px;">تکرار سفارش (هر بار همان حجم)</label>
+            <select id="et_qty_repeat">
+              <option value="1" selected>۱ بار (پیش‌فرض)</option>
+              <option value="2">۲ بار</option>
+              <option value="3">۳ بار</option>
+              <option value="4">۴ بار</option>
+              <option value="5">۵ بار</option>
+              <option value="6">۶ بار</option>
+              <option value="8">۸ بار</option>
+              <option value="10">۱۰ بار</option>
+              <option value="20">۲۰ بار</option>
+              <option value="50">۵۰ بار</option>
+              <option value="100">۱۰۰ بار</option>
+            </select>
+            <span class="muted-small">۳ = سه سفارش ۳۰۰تایی پشت‌هم ثبت می‌شود</span>
           </div>
         </div>
 
         <div class="grid-2 spaced-top">
           <div class="field">
             <label for="et_retry_max">تلاش تا ثبت نهایی (خرید واقعی)</label>
-            <input id="et_retry_max" type="number" min="1" max="2000" step="1" value="900" />
-            <span class="muted-small">اگر سامانه «خارج از ساعت معاملات» بگوید، بات همین‌قدر بار تلاش می‌کند تا سفارش ثبت شود. با فاصله زیر.</span>
+            <input id="et_retry_max" type="number" min="1" max="1000000" step="1" value="900" />
+            <span class="muted-small">اگر سامانه «خارج از ساعت معاملات» بگوید، بات تا ۱٬۰۰۰٬۰۰۰ تلاش می‌کند تا سفارش ثبت شود. با فاصله زیر.</span>
           </div>
           <div class="field">
             <label for="et_retry_wait">فاصله بین تلاش‌ها (ثانیه)</label>
-            <input id="et_retry_wait" type="number" min="5" max="300" step="1" value="45" />
-            <span class="muted-small">۹۰۰ تلاش × ۴۵ ثانیه ≈ ۱۱ ساعت پوشش شب تا صبح. توقف با «توقف».</span>
+            <input id="et_retry_wait" type="number" min="0.001" max="300" step="0.001" value="45" />
+            <span class="muted-small">برای سرخطی عدد کوچک مثل 0.001 یا 0.002 بگذارید تا پشت‌هم فوراً تلاش شود؛ عدد بزرگ (۴۵) برای پوشش طولانی شب. توقف با «توقف».</span>
           </div>
         </div>
 

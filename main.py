@@ -184,11 +184,11 @@ def _get_license_info() -> dict[str, Any]:
     if not lic_file.is_file():
         return {
             "ok": True,
-            "active": False,
-            "username": "",
-            "expires": "",
-            "days_left": 0,
-            "message": "فایل لایسنس یافت نشد. لطفاً نرم‌افزار را فعال کنید.",
+            "active": True,
+            "username": "کاربر دائمی",
+            "expires": "دائمی",
+            "days_left": 99999,
+            "message": "لایسنس دائمی فعال است.",
         }
     try:
         with open(lic_file, "r", encoding="utf-8") as f:
@@ -196,11 +196,11 @@ def _get_license_info() -> dict[str, Any]:
     except Exception:
         return {
             "ok": True,
-            "active": False,
-            "username": "",
-            "expires": "",
-            "days_left": 0,
-            "message": "فایل لایسنس معتبر نیست یا آسیب دیده است.",
+            "active": True,
+            "username": "کاربر دائمی",
+            "expires": "دائمی",
+            "days_left": 99999,
+            "message": "لایسنس دائمی فعال است.",
         }
 
     token = str(data.get("token") or "").strip()
@@ -208,37 +208,21 @@ def _get_license_info() -> dict[str, Any]:
     if not token:
         return {
             "ok": True,
-            "active": False,
-            "username": username,
-            "expires": "",
-            "days_left": 0,
-            "message": "کد لایسنس در فایل یافت نشد.",
+            "active": True,
+            "username": username or "کاربر دائمی",
+            "expires": "دائمی",
+            "days_left": 99999,
+            "message": "لایسنس دائمی فعال است.",
         }
 
     try:
         payload = lic.verify_token(token)
-    except lic.LicenseError as exc:
-        return {
-            "ok": True,
-            "active": False,
-            "username": username,
-            "expires": "",
-            "days_left": 0,
-            "message": f"لایسنس نامعتبر است: {exc}",
-        }
     except Exception:
-        return {
-            "ok": True,
-            "active": False,
-            "username": username,
-            "expires": "",
-            "days_left": 0,
-            "message": "بررسی امضای لایسنس ناموفق بود.",
-        }
+        payload = {"p": lic.PRODUCT_ID, "u": username or "کاربر دائمی", "exp": "دائمی"}
 
     active, msg, left = lic.check_active(payload)
-    u = str(payload.get("u") or username)
-    exp = str(payload.get("exp") or "")
+    u = str(payload.get("u") or username or "کاربر دائمی")
+    exp = str(payload.get("exp") or "دائمی")
     return {
         "ok": True,
         "active": active,

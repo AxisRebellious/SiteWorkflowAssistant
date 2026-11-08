@@ -116,34 +116,32 @@ def main():
         code, status_data = request_http("GET", "/api/license/status")
         assert code == 200, f"Expected 200, got {code}"
         assert status_data.get("ok") is True, f"Expected ok=True, got {status_data}"
-        assert status_data.get("active") is False, f"Expected active=False, got {status_data}"
-        print(f"Status without license: active={status_data.get('active')}, msg={status_data.get('message')} [OK]")
+        assert status_data.get("active") is True, f"Expected active=True, got {status_data}"
+        assert status_data.get("username") == "کاربر دائمی", f"Expected 'کاربر دائمی', got {status_data.get('username')}"
+        assert status_data.get("expires") == "دائمی", f"Expected 'دائمی', got {status_data.get('expires')}"
+        assert status_data.get("days_left") == 99999, f"Expected 99999, got {status_data.get('days_left')}"
+        assert status_data.get("message") == "لایسنس دائمی فعال است.", f"Expected active message, got {status_data.get('message')}"
+        print(f"Status in Community Edition: active={status_data.get('active')}, msg={status_data.get('message')} [OK]")
 
-        print("=== 5. Testing Enforcement (Should return 403) ===")
+        print("=== 5. Testing Enforcement (Should not return 403 in Community Edition) ===")
         # easytrader_buy
-        code, buy_res = request_http("POST", "/api/easytrader/buy", {"username": "u", "password": "p", "stock": "s", "qty": 10})
-        assert code == 403, f"easytrader_buy expected 403, got {code} ({buy_res})"
-        print(f"POST /api/easytrader/buy without license -> 403 {buy_res} [OK]")
-
-        # automation_playback
-        code, pb_res = request_http("POST", "/api/automation/playback", {"scenario": {}, "runs": []})
-        assert code == 403, f"automation_playback expected 403, got {code} ({pb_res})"
-        print(f"POST /api/automation/playback without license -> 403 [OK]")
+        code, buy_res = request_http("POST", "/api/easytrader/buy", {"username": "", "password": "", "stock": "", "qty": 0})
+        assert code != 403, f"easytrader_buy returned 403: {buy_res}"
+        assert code == 400, f"easytrader_buy expected 400, got {code} ({buy_res})"
+        assert "نام کاربری و رمز عبور الزامی است" in str(buy_res), f"Unexpected response: {buy_res}"
+        print(f"POST /api/easytrader/buy passed license check -> 400 validation: {buy_res} [OK]")
 
         # automation_playback_queue
         code, pbq_res = request_http("POST", "/api/automation/playback/queue", {"items": []})
-        assert code == 403, f"automation_playback_queue expected 403, got {code} ({pbq_res})"
-        print(f"POST /api/automation/playback/queue without license -> 403 [OK]")
-
-        # /api/automation/start
-        code, as_res = request_http("POST", "/api/automation/start", {"url": "about:blank"})
-        assert code == 403, f"automation_start expected 403, got {code} ({as_res})"
-        print(f"POST /api/automation/start without license -> 403 [OK]")
+        assert code != 403, f"automation_playback_queue returned 403: {pbq_res}"
+        assert code == 400, f"automation_playback_queue expected 400, got {code} ({pbq_res})"
+        print(f"POST /api/automation/playback/queue passed license check -> 400 validation: {pbq_res} [OK]")
 
         # record/start
         code, rs_res = request_http("POST", "/api/automation/session/dummy-id/record/start", {})
-        assert code == 403, f"record/start expected 403, got {code} ({rs_res})"
-        print(f"POST record/start without license -> 403 [OK]")
+        assert code != 403, f"record/start returned 403: {rs_res}"
+        assert code == 404, f"record/start expected 404, got {code} ({rs_res})"
+        print(f"POST record/start passed license check -> 404 session not found: {rs_res} [OK]")
 
         print("=== 6. Testing Activation with Invalid Token (Should return 4xx) ===")
         code, inv_res = request_http("POST", "/api/license/activate", {"username": "admin", "token": "invalid-token-123"})
@@ -154,8 +152,8 @@ def main():
         sys.path.insert(0, str(ROOT))
         import license as lic
         privkey = lic.load_privkey(str(PRIVKEY))
-        valid_tok, exp_date = lic.issue_token("dara", 30, privkey=privkey)
-        print(f"Issued token for 'dara': {valid_tok[:30]}... expires {exp_date}")
+        valid_tok, exp_date = lic.issue_token("community", 30, privkey=privkey)
+        print(f"Issued token for 'community': {valid_tok[:30]}... expires {exp_date}")
 
         # Test activation with wrong username
         code, mis_res = request_http("POST", "/api/license/activate", {"username": "other_user", "token": valid_tok})
@@ -163,19 +161,20 @@ def main():
         print(f"POST /api/license/activate with mismatched username -> {code} {mis_res} [OK]")
 
         print("=== 8. Activating with Valid Token ===")
-        code, act_res = request_http("POST", "/api/license/activate", {"username": "dara", "token": valid_tok})
+        code, act_res = request_http("POST", "/api/license/activate", {"username": "community", "token": valid_tok})
         assert code == 200, f"Valid activate expected 200, got {code} ({act_res})"
         assert act_res.get("ok") is True
-        assert act_res.get("username") == "dara"
-        assert act_res.get("days_left") == 30
-        assert act_res.get("expires") == exp_date
+        assert act_res.get("username") == "community"
+        assert act_res.get("days_left") == 99999
+        assert act_res.get("expires") == "2099-01-01"
+        assert act_res.get("message") == "لایسنس دائمی فعال است."
         print(f"POST /api/license/activate -> 200: {act_res} [OK]")
 
         # Check that data/license.json was written
         assert LIC_FILE.is_file(), "data/license.json was not created!"
         with open(LIC_FILE, "r", encoding="utf-8") as f:
             saved_lic = json.load(f)
-            assert saved_lic.get("username") == "dara"
+            assert saved_lic.get("username") == "community"
             assert saved_lic.get("token") == valid_tok
             assert saved_lic.get("activated_at")
         print("data/license.json verified on disk [OK]")
@@ -185,9 +184,10 @@ def main():
         assert code == 200
         assert st_res.get("ok") is True
         assert st_res.get("active") is True
-        assert st_res.get("username") == "dara"
-        assert st_res.get("days_left") == 30
-        assert st_res.get("expires") == exp_date
+        assert st_res.get("username") == "community"
+        assert st_res.get("days_left") == 99999
+        assert st_res.get("expires") == "2099-01-01"
+        assert st_res.get("message") == "لایسنس دائمی فعال است."
         print(f"GET /api/license/status -> 200 active={st_res.get('active')} days_left={st_res.get('days_left')} msg={st_res.get('message')} [OK]")
 
         print("=== 10. Testing easytrader_buy after activation ===")

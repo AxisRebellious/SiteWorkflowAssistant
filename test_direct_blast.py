@@ -233,5 +233,150 @@ class TestDirectBlastEngineAsync(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(engine.is_closed)
 
 
+class TestDirectBlastAPIIntegration(unittest.TestCase):
+    def setUp(self):
+        from fastapi.testclient import TestClient
+        from main import app
+        self.client = TestClient(app)
+
+    @patch("main.DirectBlastEngine.blast")
+    @patch("main.DirectBlastEngine.calibrate_ping")
+    @patch("main.DirectBlastEngine.pre_warm")
+    def test_direct_blast_endpoint_immediate(self, mock_prewarm, mock_calibrate, mock_blast):
+        mock_prewarm.return_value = True
+        mock_calibrate.return_value = (0.012, 0.001)
+        mock_blast.return_value = [
+            {"index": 0, "ok": True, "status_code": 200, "text": '{"orderId":"1"}', "headers": {}, "latency_ms": 10.5, "error": None},
+            {"index": 1, "ok": True, "status_code": 200, "text": '{"orderId":"2"}', "headers": {}, "latency_ms": 11.2, "error": None},
+            {"index": 2, "ok": True, "status_code": 200, "text": '{"orderId":"3"}', "headers": {}, "latency_ms": 10.8, "error": None},
+        ]
+
+        resp = self.client.post(
+            "/api/easytrader/direct_blast",
+            json={
+                "stock": "فولاد",
+                "qty": 500,
+                "price_mode": "max",
+                "burst_count": 3,
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["stock"], "فولاد")
+        self.assertEqual(data["qty"], 500)
+        self.assertTrue(data["prewarm_60s"])
+        self.assertAlmostEqual(data["ping_rtt_ms"], 12.0, places=1)
+        self.assertEqual(len(data["results"]), 3)
+        mock_prewarm.assert_awaited_once()
+        mock_calibrate.assert_awaited_once()
+        mock_blast.assert_awaited_once()
+
+    @patch("main.asyncio.sleep")
+    @patch("main.DirectBlastEngine.blast")
+    @patch("main.DirectBlastEngine.calibrate_ping")
+    @patch("main.DirectBlastEngine.pre_warm")
+    def test_direct_blast_endpoint_scheduled(self, mock_prewarm, mock_calibrate, mock_blast, mock_sleep):
+        mock_prewarm.return_value = True
+        mock_calibrate.return_value = (0.020, 0.000)
+        mock_blast.return_value = [
+            {"index": 0, "ok": True, "status_code": 200, "text": '{"orderId":"10"}', "headers": {}, "latency_ms": 8.0, "error": None}
+        ]
+
+        now = time.time()
+        target = now + 120.0  # 120s in future -> pre-warm in 60s
+        resp = self.client.post(
+            "/api/easytrader/direct_blast",
+            json={
+                "stock": "شستا",
+                "qty": 1000,
+                "target_epoch": target,
+                "burst_count": 1,
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["stock"], "شستا")
+        self.assertEqual(data["qty"], 1000)
+        self.assertTrue(data["prewarm_60s"])
+        # Verify pre-warm was scheduled (mock_sleep called for pre-warm window and/or fire epoch)
+        self.assertGreaterEqual(mock_sleep.await_count, 1)
+
+    def test_direct_blast_endpoint_validations(self):
+        # Missing stock
+        resp = self.client.post("/api/easytrader/direct_blast", json={"stock": "", "qty": 10})
+        self.assertEqual(resp.status_code, 400)
+
+        # Zero qty
+        resp = self.client.post("/api/easytrader/direct_blast", json={"stock": "فولاد", "qty": 0})
+        self.assertEqual(resp.status_code, 400)
+
+        # Invalid custom price
+        resp = self.client.post(
+            "/api/easytrader/direct_blast",
+            json={"stock": "فولاد", "qty": 10, "price_mode": "custom", "price_value": "abc"},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    @patch("main.DirectBlastEngine.blast")
+    @patch("main.DirectBlastEngine.calibrate_ping")
+    @patch("main.DirectBlastEngine.pre_warm")
+    def test_easytrader_buy_routing_direct_blast(self, mock_prewarm, mock_calibrate, mock_blast):
+        mock_prewarm.return_value = True
+        mock_calibrate.return_value = (0.015, 0.0)
+        mock_blast.return_value = [
+            {"index": 0, "ok": True, "status_code": 200, "text": '{"ok":true}', "headers": {}, "latency_ms": 9.5, "error": None}
+        ]
+
+        resp = self.client.post(
+            "/api/easytrader/buy",
+            json={
+                "username": "user123",
+                "password": "pass123",
+                "stock": "خودرو",
+                "qty": 200,
+                "direct_blast": True,
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["stock"], "خودرو")
+        self.assertEqual(data["qty"], 200)
+        self.assertTrue(data["prewarm_60s"])
+        mock_prewarm.assert_awaited_once()
+        mock_blast.assert_awaited_once()
+
+    @patch("main.DirectBlastEngine.blast")
+    @patch("main.DirectBlastEngine.calibrate_ping")
+    @patch("main.DirectBlastEngine.pre_warm")
+    def test_easytrader_buy_routing_direct_mode(self, mock_prewarm, mock_calibrate, mock_blast):
+        mock_prewarm.return_value = True
+        mock_calibrate.return_value = (0.015, 0.0)
+        mock_blast.return_value = [
+            {"index": 0, "ok": True, "status_code": 200, "text": '{"ok":true}', "headers": {}, "latency_ms": 9.5, "error": None}
+        ]
+
+        resp = self.client.post(
+            "/api/easytrader/buy",
+            json={
+                "username": "user123",
+                "password": "pass123",
+                "stock": "وبملت",
+                "qty": 300,
+                "direct_mode": True,
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["stock"], "وبملت")
+        self.assertEqual(data["qty"], 300)
+        self.assertTrue(data["prewarm_60s"])
+        mock_prewarm.assert_awaited_once()
+        mock_blast.assert_awaited_once()
+
+
 if __name__ == "__main__":
     unittest.main()

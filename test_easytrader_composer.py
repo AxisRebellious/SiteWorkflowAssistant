@@ -355,6 +355,35 @@ class TestOptionalStepExecution(unittest.IsolatedAsyncioTestCase):
             sleep_durations = [c.args[0] for c in mock_sleep.call_args_list]
             self.assertIn(0.4, sleep_durations)
 
+    def test_easytrader_buy_body_direct_blast_field(self):
+        body = EasyTraderBuyBody(stock="شستا")
+        self.assertFalse(body.direct_blast)
+        self.assertFalse(body.direct_mode)
+
+        body_direct = EasyTraderBuyBody(stock="فولاد", direct_blast=True)
+        self.assertTrue(body_direct.direct_blast)
+
+    @patch("main.execute_direct_blast", new_callable=AsyncMock)
+    async def test_easytrader_buy_routing_to_direct_blast(self, mock_execute):
+        mock_execute.return_value = {
+            "ok": True,
+            "stock": "فولاد",
+            "qty": "500",
+            "results": [],
+            "ping_rtt_ms": 10.0,
+            "prewarm_60s": True,
+        }
+        body = EasyTraderBuyBody(
+            stock="فولاد",
+            qty="500",
+            direct_blast=True,
+        )
+        res = await main.easytrader_buy(body)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["stock"], "فولاد")
+        self.assertTrue(res["prewarm_60s"])
+        mock_execute.assert_awaited_once()
+
 
 if __name__ == "__main__":
     unittest.main()

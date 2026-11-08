@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,13 @@ from monitor import (
 )
 
 import automation
+from direct_blast import (
+    DirectBlastEngine,
+    compile_order_payload,
+    calculate_fire_epoch,
+    calculate_prewarm_epoch,
+    PRE_WARM_WINDOW_SECONDS,
+)
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -763,9 +771,23 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 # ----- ماژول اختصاصی ایزی‌تریدر (مفید) -----
 
 
+class DirectBlastBody(BaseModel):
+    username: str = ""
+    password: str = ""
+    stock: str
+    qty: str | int = 1
+    price_mode: str = "max"
+    price_value: str = ""
+    target_time: str = ""
+    target_epoch: float | None = None
+    base_url: str | None = None
+    burst_count: int = 3
+    cancellation_id: str = ""
+
+
 class EasyTraderBuyBody(BaseModel):
-    username: str
-    password: str
+    username: str = ""
+    password: str = ""
     stock: str
     qty: str | int = "1"
     dry_run: bool = False
@@ -779,6 +801,8 @@ class EasyTraderBuyBody(BaseModel):
     target_time: str = ""
     target_epoch: float | None = None
     base_url: str | None = None
+    direct_blast: bool = False
+    direct_mode: bool = False
 
 
 def parse_target_epoch(target_time: str = "", target_epoch: float | None = None) -> float | None:
@@ -1334,9 +1358,159 @@ def compose_easytrader_scenario(
     return scenario
 
 
+async def execute_direct_blast(
+    stock: str,
+    qty: str | int = 1,
+    price_mode: str = "max",
+    price_value: str = "",
+    target_time: str = "",
+    target_epoch: float | None = None,
+    base_url: str | None = None,
+    burst_count: int = 3,
+    cancellation_id: str = "",
+    engine: DirectBlastEngine | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    stock_clean = str(stock or "").strip()
+    if not stock_clean:
+        raise HTTPException(status_code=400, detail="نام یا نماد سهام الزامی است.")
+
+    qty_str = str(qty).strip()
+    if not qty_str or qty_str == "0":
+        raise HTTPException(status_code=400, detail="تعداد/حجم خرید الزامی و باید بیشتر از صفر باشد.")
+    try:
+        qty_int = int(qty_str)
+        if qty_int <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="تعداد/حجم خرید الزامی و باید بیشتر از صفر باشد.")
+
+    mode = (price_mode or "max").strip().lower()
+    if mode not in ("max", "custom"):
+        mode = "max"
+    p_val_str = str(price_value or "").strip()
+    if mode == "custom" and not (p_val_str.isdigit() and int(p_val_str) > 0):
+        raise HTTPException(status_code=400, detail="قیمت دلخواه معتبر نیست.")
+
+    is_max_price = (mode != "custom")
+    price_int = int(p_val_str) if (p_val_str and p_val_str.isdigit()) else 0
+    payload_bytes = compile_order_payload(
+        symbol=stock_clean,
+        qty=qty_int,
+        price=price_int,
+        order_side="buy",
+        is_max_price=is_max_price,
+    )
+
+    clean_base = (base_url or "https://m.easytrader.ir").strip().rstrip("/")
+    order_url = f"{clean_base}/api/orders" if not clean_base.endswith("/orders") else clean_base
+    req_headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+    }
+    if headers:
+        req_headers.update(headers)
+
+    cancel_id = str(cancellation_id or "").strip()
+    cancel_evt = playback_cancel_registry.get(cancel_id) if cancel_id else None
+
+    effective_target_epoch = parse_target_epoch(target_time, target_epoch)
+
+    own_engine = False
+    if engine is None:
+        engine = DirectBlastEngine()
+        own_engine = True
+
+    try:
+        if effective_target_epoch is not None:
+            now = time.time()
+            prewarm_epoch = calculate_prewarm_epoch(effective_target_epoch, PRE_WARM_WINDOW_SECONDS)
+            delay_prewarm = prewarm_epoch - now
+            if delay_prewarm > 0:
+                if cancel_evt:
+                    try:
+                        await asyncio.wait_for(cancel_evt.wait(), timeout=delay_prewarm)
+                        return {"ok": False, "cancelled": True, "stock": stock_clean, "qty": qty, "results": []}
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(delay_prewarm)
+
+            await engine.pre_warm(clean_base)
+            rtt_s, server_offset_s = await engine.calibrate_ping(clean_base)
+
+            fire_epoch = calculate_fire_epoch(effective_target_epoch, rtt_s, server_offset_s)
+            delay_fire = fire_epoch - time.time()
+            if delay_fire > 0:
+                if cancel_evt:
+                    try:
+                        await asyncio.wait_for(cancel_evt.wait(), timeout=delay_fire)
+                        return {"ok": False, "cancelled": True, "stock": stock_clean, "qty": qty, "results": []}
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(delay_fire)
+
+            results = await engine.blast(
+                url=order_url,
+                payload_bytes=payload_bytes,
+                headers=req_headers,
+                count=max(1, int(burst_count or 3)),
+            )
+        else:
+            await engine.pre_warm(clean_base)
+            rtt_s, server_offset_s = await engine.calibrate_ping(clean_base)
+            results = await engine.blast(
+                url=order_url,
+                payload_bytes=payload_bytes,
+                headers=req_headers,
+                count=max(1, int(burst_count or 3)),
+            )
+
+        return {
+            "ok": True,
+            "stock": stock_clean,
+            "qty": qty,
+            "results": results,
+            "ping_rtt_ms": round(rtt_s * 1000, 3),
+            "prewarm_60s": True,
+        }
+    finally:
+        if own_engine:
+            await engine.close()
+
+
+@app.post("/api/easytrader/direct_blast")
+async def easytrader_direct_blast(body: DirectBlastBody) -> dict[str, Any]:
+    _require_license()
+    return await execute_direct_blast(
+        stock=body.stock,
+        qty=body.qty,
+        price_mode=body.price_mode,
+        price_value=body.price_value,
+        target_time=body.target_time,
+        target_epoch=body.target_epoch,
+        base_url=body.base_url,
+        burst_count=body.burst_count,
+        cancellation_id=body.cancellation_id,
+    )
+
+
 @app.post("/api/easytrader/buy")
 async def easytrader_buy(body: EasyTraderBuyBody) -> dict[str, Any]:
     _require_license()
+    if body.direct_blast or getattr(body, "direct_mode", False):
+        return await execute_direct_blast(
+            stock=body.stock,
+            qty=body.qty,
+            price_mode=body.price_mode,
+            price_value=body.price_value,
+            target_time=body.target_time,
+            target_epoch=body.target_epoch,
+            base_url=body.base_url,
+            burst_count=3,
+            cancellation_id=body.cancellation_id,
+        )
     username = body.username.strip()
     password = body.password.strip()
     stock = body.stock.strip()

@@ -1,6 +1,6 @@
 {
-  "version": "14.3",
-  "updated_at": "2026-09-23",
-  "notes": "تکرار سفارش (دراپ‌داون N بار همان حجم)، فاصله تلاش از ۰.۰۰۱ ثانیه و تا ۱٬۰۰۰٬۰۰۰ تلاش، حالت پرسرعت ثبت پشت‌سرهم، و شروع بی‌درنگ بدون ۱.۵ ثانیه مکث بعد از باز شدن صفحه",
+  "version": "14.4",
+  "updated_at": "2026-11-08",
+  "notes": "موتور شلیک مستقیم (Direct Blast) بدون مرورگر با پیش‌گرم خودکار ۶۰ ثانیه‌ای و جبران پینگ RTT، حذف لایسنس و فعال‌سازی نسخه دائمی، ساده‌سازی رابط کاربری با ذخیره مشخصات (Remember Me) و حذف خرید آزمایشی",
   "zip_url": "https://raw.githubusercontent.com/AxisRebellious/SiteWorkflowAssistant/main/dist/SiteWorkflowAssistant_Update.zip"
 }

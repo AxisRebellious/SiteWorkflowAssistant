@@ -1,13 +1,14 @@
 /**
  * EasyTrader (Mofid PWA) Dedicated Fast Buy Assistant
- * Frontend controller: Single Buy (Real / Dry-Run), Queue Execution,
- * Live Log Polling, Smart Scheduler (5-min warm-up), Persistent Browser Session
+ * Frontend controller: Autonomous Front-Running (60s pre-warm), Queue Execution,
+ * Live Log Polling, Remember Me Credentials Persistence, Persistent Browser Session
  */
 
 (function () {
   "use strict";
 
   const STORAGE_KEY_QUEUE = "easytrader_orders_queue_v1";
+  const STORAGE_KEY_CREDS = "easytrader_saved_credentials_v1";
 
   // State
   let activeCancelId = null;
@@ -15,8 +16,6 @@
   let isSingleRunning = false;
   let isQueueRunning = false;
   let logPollInterval = null;
-  let isLicenseActive = true;
-  let licenseHeartbeatInterval = null;
 
   // Scheduler State
   let scheduleTimer = null;
@@ -252,19 +251,99 @@
     return { username, password };
   }
 
+  // Credentials Persistence ("ذخیره اطلاعات من")
+  function saveCredentialsIfRemembered() {
+    const rememberEl = el("et_remember_me");
+    if (!rememberEl) return;
+    if (!rememberEl.checked) {
+      try {
+        localStorage.removeItem(STORAGE_KEY_CREDS);
+      } catch (e) {
+        // silent
+      }
+      return;
+    }
+
+    const creds = getCredentials();
+    const stock = (el("et_stock")?.value || "").trim();
+    const qty = (el("et_qty")?.value || "").trim();
+    const priceModeEl = document.querySelector('input[name="et_price_mode"]:checked');
+    const price_mode = priceModeEl ? priceModeEl.value : "max";
+    const price_value = (el("et_price")?.value || "").trim();
+    const schedule_time = (el("et_schedule_time")?.value || "08:45:00").trim();
+
+    const dataToSave = {
+      username: creds.username,
+      password: creds.password,
+      stock,
+      qty,
+      price_mode,
+      price_value,
+      schedule_time,
+    };
+
+    try {
+      localStorage.setItem(STORAGE_KEY_CREDS, JSON.stringify(dataToSave));
+    } catch (e) {
+      console.warn("Failed to persist credentials in localStorage:", e);
+    }
+  }
+
+  function loadSavedCredentials() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_CREDS);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return;
+
+      if (data.username !== undefined && el("et_username")) {
+        el("et_username").value = data.username;
+      }
+      if (data.password !== undefined && el("et_password")) {
+        el("et_password").value = data.password;
+      }
+      if (data.stock !== undefined && el("et_stock")) {
+        el("et_stock").value = data.stock;
+      }
+      if (data.qty !== undefined && el("et_qty")) {
+        el("et_qty").value = data.qty;
+      }
+      if (data.price_mode) {
+        const modeRadio = document.querySelector(`input[name="et_price_mode"][value="${data.price_mode}"]`);
+        if (modeRadio) {
+          modeRadio.checked = true;
+        }
+        if (el("et_price")) {
+          el("et_price").disabled = data.price_mode !== "custom";
+        }
+      }
+      if (data.price_value !== undefined && el("et_price")) {
+        el("et_price").value = data.price_value;
+      }
+      if (data.schedule_time !== undefined && el("et_schedule_time")) {
+        el("et_schedule_time").value = data.schedule_time;
+      }
+      if (el("et_remember_me")) {
+        el("et_remember_me").checked = true;
+      }
+    } catch (e) {
+      console.error("Failed to restore saved credentials:", e);
+    }
+  }
+
   // Unified Button & Status States
   function updateButtonsState() {
     const anyRunning = isSingleRunning || isQueueRunning;
     const isWaiting = isScheduledWaiting;
 
     if (el("btn_buy_single")) {
-      el("btn_buy_single").disabled = anyRunning || isWaiting || !isLicenseActive;
+      el("btn_buy_single").disabled = anyRunning || isWaiting;
     }
     if (el("btn_queue_run")) {
-      el("btn_queue_run").disabled = anyRunning || isWaiting || !isLicenseActive;
+      el("btn_queue_run").disabled = anyRunning || isWaiting;
     }
     if (el("btn_add_to_queue")) {
-      el("btn_add_to_queue").disabled = anyRunning || isWaiting || !isLicenseActive;
+      el("btn_add_to_queue").disabled = anyRunning || isWaiting;
     }
     if (el("btn_queue_clear")) {
       el("btn_queue_clear").disabled = anyRunning || isWaiting;
@@ -282,18 +361,18 @@
 
     if (isWaiting) {
       if (el("et_single_status")) {
-        el("et_single_status").textContent = "زمان‌بندی فعال — در انتظار زمان آماده‌سازی";
+        el("et_single_status").textContent = "زمان‌بندی فعال — آماده‌سازی از ۱ دقیقه قبل";
         el("et_single_status").style.color = "#fbbf24";
       }
     } else if (isSingleRunning) {
       if (el("et_single_status")) {
-        el("et_single_status").textContent = "در حال اجرای خرید...";
+        el("et_single_status").textContent = "در حال اجرای سرخطی...";
         el("et_single_status").style.color = "#60a5fa";
       }
     } else {
       if (el("et_single_status")) {
         el("et_single_status").textContent = "آماده";
-        el("et_single_status").style.color = "var(--text-muted)";
+        el("et_single_status").style.color = "#4ade80";
       }
     }
 
@@ -307,111 +386,6 @@
       isQueueRunning = running;
     }
     updateButtonsState();
-  }
-
-  function setBuyButtonsDisabled(disabled) {
-    isLicenseActive = !disabled;
-    updateButtonsState();
-  }
-
-  // License and Overlay Helpers
-  function showLicenseOverlay(message) {
-    let overlay = el("et_license_overlay");
-    if (!overlay) {
-      overlay = document.createElement("div");
-      overlay.id = "et_license_overlay";
-      overlay.style.cssText = `
-        position: fixed;
-        inset: 0;
-        background: rgba(5, 5, 8, 0.94);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        z-index: 999999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        direction: rtl;
-        padding: 24px;
-      `;
-      document.body.appendChild(overlay);
-    }
-
-    overlay.innerHTML = `
-      <div style="
-        background: rgba(18, 18, 24, 0.98);
-        border: 1px solid rgba(239, 68, 68, 0.45);
-        border-radius: 16px;
-        box-shadow: 0 10px 40px rgba(0,0,0,0.85), 0 0 30px rgba(239, 68, 68, 0.2);
-        max-width: 480px;
-        width: 100%;
-        padding: 36px 28px;
-        text-align: center;
-        color: #f0f0f0;
-        font-family: inherit;
-      ">
-        <div style="font-size: 3.5rem; margin-bottom: 12px; line-height: 1;">🔒</div>
-        <h2 style="margin: 0 0 12px; font-size: 1.35rem; color: #fca5a5; font-weight: 700;">
-          دسترسی مسدود است — لایسنس فعال نیست
-        </h2>
-        <p style="margin: 0 0 24px; color: #a1a1aa; font-size: 0.95rem; line-height: 1.7;">
-          ${message || "اعتبار لایسنس شما به پایان رسیده یا لایسنس ثبت نشده است."}
-        </p>
-        <div>
-          <a href="/" style="
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-            color: #ffffff;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-weight: 600;
-            text-decoration: none;
-            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
-            transition: all 0.2s;
-          ">🔑 رفتن به صفحه فعال‌سازی لایسنس</a>
-        </div>
-      </div>
-    `;
-    overlay.style.display = "flex";
-  }
-
-  function hideLicenseOverlay() {
-    const overlay = el("et_license_overlay");
-    if (overlay) {
-      overlay.style.display = "none";
-    }
-  }
-
-  async function checkLicenseStatus() {
-    try {
-      const res = await fetch("/api/license/status");
-      if (!res.ok) {
-        isLicenseActive = false;
-        showLicenseOverlay("خطا در بررسی وضعیت لایسنس از سرور.");
-        setBuyButtonsDisabled(true);
-        return false;
-      }
-      const data = await res.json();
-      if (!data.active) {
-        isLicenseActive = false;
-        showLicenseOverlay(data.message || "لایسنس نرم‌افزار معتبر یا فعال نیست.");
-        setBuyButtonsDisabled(true);
-        return false;
-      }
-
-      // License is active
-      isLicenseActive = true;
-      hideLicenseOverlay();
-      updateButtonsState();
-      return true;
-    } catch (err) {
-      isLicenseActive = false;
-      showLicenseOverlay("ارتباط با سرور دستیار برقرار نشد.");
-      setBuyButtonsDisabled(true);
-      return false;
-    }
   }
 
   // Price mode: max (default) or custom value
@@ -447,23 +421,19 @@
     const banner = el("et_schedule_banner");
     if (!banner) return;
     const countdownStr = formatCountdown(remainingMs);
-    const dryRun = el("et_dry_run")?.checked;
-    const modeChipHtml = dryRun
-      ? `<span class="badge badge-dry" style="margin-right: 6px;">حالت: آزمایشی</span>`
-      : `<span class="badge badge-turbo" style="margin-right: 6px;">حالت: واقعی</span>`;
     banner.innerHTML = `
       <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
-        <div>
-          <span>⏳ <strong>زمان‌بندی فعال:</strong></span>
-          <span>زمان هدف [<strong>${escapeHtml(targetTimeStr)}</strong>]</span>
-          <span style="opacity: 0.6; margin: 0 4px;">|</span>
-          <span>شروع آماده‌سازی در [<strong>${escapeHtml(wakeTimeStr)}</strong>]</span>
-          <span style="opacity: 0.6; margin: 0 4px;">|</span>
-          <span>مانده تا شروع: <span class="schedule-countdown">${countdownStr}</span></span>
-          <span style="opacity: 0.6; margin: 0 4px;">|</span>
-          ${modeChipHtml}
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 6px;">
+          <span>⏳ <strong>سرخطی زمان‌بندی‌شده:</strong></span>
+          <span>هدف: [<strong>${escapeHtml(targetTimeStr)}</strong>]</span>
+          <span style="opacity: 0.6;">|</span>
+          <span>گرم‌کردن کانکشن در: [<strong>${escapeHtml(wakeTimeStr)}</strong>]</span>
+          <span style="opacity: 0.6;">|</span>
+          <span>مانده تا گرم‌کردن: <span class="schedule-countdown">${countdownStr}</span></span>
+          <span style="opacity: 0.6;">|</span>
+          <span class="badge badge-turbo" style="margin-right: 4px;">سرخطی پرسرعت</span>
         </div>
-        <button type="button" class="danger small" id="btn_banner_cancel" style="padding: 3px 10px; font-size: 0.8rem;">⏹️ لغو زمان‌بندی</button>
+        <button type="button" class="danger small" id="btn_banner_cancel" style="padding: 4px 12px; font-size: 0.82rem;">⏹️ لغو زمان‌بندی</button>
       </div>
     `;
     banner.classList.add("active");
@@ -498,43 +468,27 @@
     setRunningState("queue", false);
   }
 
-  function updateDryRunWarnings() {
-    const warnEl = el("et_schedule_drywarn");
-    const schedEnabled = Boolean(el("et_schedule_enabled")?.checked);
-    const dryRunChecked = Boolean(el("et_dry_run")?.checked);
-    if (warnEl) {
-      warnEl.style.display = (schedEnabled && dryRunChecked) ? "block" : "none";
-    }
-  }
-
   function initScheduleInputs() {
     const dateInput = el("et_schedule_date");
     const timeInput = el("et_schedule_time");
-    const enabledCheck = el("et_schedule_enabled");
-    const container = el("et_schedule_inputs_container");
 
     if (dateInput && !dateInput.value) {
       const now = new Date();
-      const y = now.getFullYear();
-      const m = String(now.getMonth() + 1).padStart(2, "0");
-      const d = String(now.getDate()).padStart(2, "0");
+      // If after 08:45:00 today, default to tomorrow's date
+      const targetToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8, 45, 0);
+      const effectiveDate = (now.getTime() > targetToday.getTime())
+        ? new Date(now.getTime() + 24 * 3600 * 1000)
+        : now;
+
+      const y = effectiveDate.getFullYear();
+      const m = String(effectiveDate.getMonth() + 1).padStart(2, "0");
+      const d = String(effectiveDate.getDate()).padStart(2, "0");
       dateInput.value = `${y}-${m}-${d}`;
     }
 
     if (timeInput && !timeInput.value) {
       timeInput.value = "08:45:00";
     }
-
-    if (enabledCheck && container) {
-      const toggle = () => {
-        container.style.display = enabledCheck.checked ? "grid" : "none";
-        updateDryRunWarnings();
-      };
-      enabledCheck.addEventListener("change", toggle);
-      toggle();
-    }
-
-    el("et_dry_run")?.addEventListener("change", updateDryRunWarnings);
   }
 
   function getScheduleSettings() {
@@ -581,13 +535,13 @@
 
     const now = Date.now();
     if (T_target < now) {
-      showToast(`زمان هدف (${timeVal}) برای امروز سپری شده است. لطفاً ساعت یا تاریخ آینده را تعیین کنید.`, false);
+      showToast(`زمان هدف (${timeVal}) سپری شده است. لطفاً ساعت یا تاریخ آینده را تعیین کنید.`, false);
       el("et_schedule_time")?.focus();
       return null;
     }
 
-    // Wake-up time: 5 minutes before T_target
-    const T_wake = T_target - 5 * 60 * 1000;
+    // Wake-up time: 60 seconds (1 minute) before T_target for pre-warm
+    const T_wake = T_target - 60 * 1000;
 
     return {
       enabled: true,
@@ -618,14 +572,10 @@
 
     logAppend(`⏱️ زمان‌بندی هوشمند شروع خودکار فعال شد.`);
     logAppend(`🎯 زمان هدف سرخطی: ${targetTimeStr}`);
-    logAppend(`🚀 زمان شروع آماده‌سازی (۵ دقیقه قبل): ${wakeTimeStr}`);
-    if (el("et_dry_run")?.checked) {
-      logAppend("⚠️ حالت آزمایشی: دکمه «ارسال خرید» در پایان زده نمی‌شود (فقط آماده‌سازی فرم).");
-    } else {
-      logAppend("✅ حالت خرید واقعی: دکمه «ارسال خرید» در ثانیه هدف زده می‌شود.");
-    }
-    logAppend(`⏳ سامانه تا زمان آماده‌سازی در حالت انتظار معکوس قرار می‌گیرد...`);
-    showToast(`زمان‌بندی فعال شد. شروع آماده‌سازی در ${wakeTimeStr}`, true);
+    logAppend(`🚀 زمان گرم‌کردن کانکشن (۱ دقیقه قبل): ${wakeTimeStr}`);
+    logAppend("✅ آماده‌سازی سرخطی فوق‌سریع: ارسال مستقیم سفارش در رأس ثانیه هدف.");
+    logAppend(`⏳ سیستم تا زمان گرم‌کردن کانکشن در حالت شمارش معکوس قرار دارد...`);
+    showToast(`زمان‌بندی فعال شد. گرم‌کردن کانکشن در ${wakeTimeStr}`, true);
 
     const updateTick = () => {
       const now = Date.now();
@@ -642,11 +592,11 @@
 
         const banner = el("et_schedule_banner");
         if (banner) {
-          banner.innerHTML = `<div>⚡ <strong>زمان آماده‌سازی فرا رسید!</strong> در حال اجرای اتوماسیون (هدف سرخطی: ${escapeHtml(targetTimeStr)})...</div>`;
+          banner.innerHTML = `<div>⚡ <strong>زمان آماده‌سازی و گرم‌کردن کانکشن فرا رسید!</strong> در حال آماده‌سازی و شلیک سرخطی (هدف: ${escapeHtml(targetTimeStr)})...</div>`;
         }
 
-        logAppend(`\n🔔 زمان بیداری فرا رسید! شروع خودکار اتوماسیون (۵ دقیقه پیش از سرخطی ${targetTimeStr})...`);
-        showToast("زمان بیداری فرا رسید. شروع اتوماسیون آماده‌سازی خرید...", true);
+        logAppend(`\n🔔 زمان گرم‌کردن کانکشن فرا رسید! شروع خودکار اتوماسیون (۱ دقیقه پیش از سرخطی ${targetTimeStr})...`);
+        showToast("گرم‌کردن کانکشن آغاز شد. آماده‌سازی برای شلیک سرخطی...", true);
 
         const execInfo = {
           target_epoch: sched.target_epoch,
@@ -670,10 +620,10 @@
   }
 
   // Execute a single buy request (with persistent browser & optional target epoch)
-  async function executeBuyRequest(stock, qty, dryRun, cancelId, priceOpts, extraParams = {}) {
+  async function executeBuyRequest(stock, qty, cancelId, priceOpts, extraParams = {}) {
     const creds = getCredentials();
     const retryMaxRaw = parseInt((el("et_retry_max") || {}).value || "900", 10);
-    const retryWaitRaw = parseFloat((el("et_retry_wait") || {}).value || "45");
+    const retryWaitRaw = parseFloat((el("et_retry_wait") || {}).value || "0.002");
     const price = priceOpts && priceOpts.mode === "custom" ? { mode: "custom", value: priceOpts.value || "" } : { mode: "max", value: "" };
 
     // Persistent browser across operations
@@ -686,11 +636,11 @@
       qty: qty,
       price_mode: price.mode,
       price_value: price.value,
-      dry_run: dryRun,
+      dry_run: false,
       turbo_mode: true,
       cancellation_id: cancelId,
       submit_max_attempts: Math.max(1, Math.min(isNaN(retryMaxRaw) ? 900 : retryMaxRaw, 1000000)),
-      submit_wait_s: Math.max(0.001, Math.min(isNaN(retryWaitRaw) ? 45 : retryWaitRaw, 300)),
+      submit_wait_s: Math.max(0.001, Math.min(isNaN(retryWaitRaw) ? 0.002 : retryWaitRaw, 300)),
       keep_browser: keepBrowser,
     };
 
@@ -709,11 +659,6 @@
 
     const data = await res.json();
     if (!res.ok) {
-      if (res.status === 403) {
-        isLicenseActive = false;
-        showLicenseOverlay(data.detail || "دسترسی مسدود است: لایسنس فعال نیست.");
-        setBuyButtonsDisabled(true);
-      }
       throw new Error(data.detail || data.error || `خطای سرور (${res.status})`);
     }
     return data;
@@ -724,7 +669,6 @@
     const stock = el("et_stock").value.trim();
     const qty = el("et_qty").value.trim();
     const price = getPriceSettings();
-    const dryRun = el("et_dry_run").checked;
     const repeat = Math.max(1, Math.min(parseInt(el("et_qty_repeat")?.value || "1", 10) || 1, 100));
 
     activeCancelId = "et_run_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
@@ -733,7 +677,7 @@
     setRunningState("single", true);
     const schedText = scheduleInfo ? ` | زمان‌بندی سرخطی: ${scheduleInfo.target_time}` : "";
     const repeatText = repeat > 1 ? ` | تکرار: ${repeat} بار` : "";
-    logSet(`▶️ شروع خرید برای نماد: ${stock} | حجم: ${qty}${repeatText} | حالت: ${dryRun ? "آزمایشی (Dry-Run)" : "خرید واقعی"}${schedText}`);
+    logSet(`▶️ شروع سرخطی خودکار برای نماد: ${stock} | حجم: ${qty}${repeatText} | حالت: خرید واقعی فوق‌سریع${schedText}`);
     startLogPolling();
 
     let completedOrders = 0;
@@ -761,7 +705,7 @@
 
         let result;
         try {
-          result = await executeBuyRequest(stock, qty, dryRun, activeCancelId, price, extraParams);
+          result = await executeBuyRequest(stock, qty, activeCancelId, price, extraParams);
         } catch (reqErr) {
           if (singleCancelRequested || (reqErr.message && /cancel|لغو|توقف/i.test(reqErr.message))) {
             wasCancelled = true;
@@ -816,22 +760,12 @@
         }
         logAppend(`❌ خطا: ${fatalError}`);
       } else {
-        if (dryRun) {
-          if (repeat > 1) {
-            showToast(`${repeat} خرید آزمایشی «${stock}» با موفقیت انجام شد و مرورگر باز ماند.`, true);
-            logAppend(`✅ هر ${repeat} سفارش خرید آزمایشی نماد «${stock}» با موفقیت تا انتخاب سقف قیمت انجام شد.`);
-          } else {
-            showToast(`خرید آزمایشی «${stock}» با موفقیت انجام شد و مرورگر باز ماند.`, true);
-            logAppend(`✅ خرید آزمایشی نماد «${stock}» با موفقیت تا انتخاب سقف قیمت انجام شد.`);
-          }
+        if (repeat > 1) {
+          showToast(`هر ${repeat} سفارش خرید نماد «${stock}» با موفقیت در ایزی‌تریدر ثبت شد!`, true);
+          logAppend(`🎉 تمام ${repeat} سفارش خرید قطعی نماد «${stock}» با موفقیت ثبت نهایی شد.`);
         } else {
-          if (repeat > 1) {
-            showToast(`هر ${repeat} سفارش خرید نماد «${stock}» با موفقیت در ایزی‌تریدر ثبت شد!`, true);
-            logAppend(`🎉 تمام ${repeat} سفارش خرید قطعی نماد «${stock}» با موفقیت ثبت نهایی شد.`);
-          } else {
-            showToast(`سفارش خرید نماد «${stock}» با موفقیت در ایزی‌تریدر ثبت شد!`, true);
-            logAppend(`🎉 سفارش خرید قطعی نماد «${stock}» با موفقیت ثبت نهایی شد.`);
-          }
+          showToast(`سفارش خرید نماد «${stock}» با موفقیت در ایزی‌تریدر ثبت شد!`, true);
+          logAppend(`🎉 سفارش خرید قطعی نماد «${stock}» با موفقیت ثبت نهایی شد.`);
         }
       }
 
@@ -856,14 +790,12 @@
 
   // Single Buy Click Handler
   async function handleSingleBuy() {
-    if (!isLicenseActive) {
-      showLicenseOverlay("لایسنس فعال نیست. لطفاً ابتدا لایسنس را در صفحه اصلی فعال کنید.");
-      setBuyButtonsDisabled(true);
-      return;
-    }
+    // Save credentials if Remember Me is checked
+    saveCredentialsIfRemembered();
+
     const creds = getCredentials();
     if (!creds.username || !creds.password) {
-      showToast("لطفاً ابتدا نام کاربری و رمز عبور ایزی‌تریدر را در کارت ۱ وارد کنید.", false);
+      showToast("لطفاً ابتدا نام کاربری و رمز عبور ایزی‌تریدر را در بخش ۱ وارد کنید.", false);
       el("et_username").focus();
       return;
     }
@@ -894,26 +826,19 @@
       return;
     }
 
-    if (sched.enabled && el("et_dry_run")?.checked) {
-      const ok = confirm("زمان‌بندی با حالت آزمایشی فعال است؛ دکمه «ارسال خرید» زده نمی‌شود و سفارشی ثبت نخواهد شد.\n\nمی‌خواهید ادامه دهید؟");
-      if (!ok) {
-        return;
-      }
-    }
-
     if (sched.enabled) {
       const now = Date.now();
       if (now < sched.T_wake) {
-        // Case 1: Waiting before the 5-min prep window
+        // Case 1: Waiting before the 60s pre-warm window
         startScheduleCountdown(sched, "single");
         return;
       } else if (now >= sched.T_wake && now < sched.T_target) {
-        // Case 2: Inside the 5-min prep window -> run immediately with target_epoch
-        logAppend(`⚡ در بازه آماده‌سازی ۵ دقیقه‌ای قرار داریم. شروع فوری اتوماسیون (هدف سرخطی: ${sched.timeStr})...`);
-        showToast(`در بازه آماده‌سازی ۵ دقیقه پیش از ${sched.timeStr} قرار داریم. شروع فوری...`, true);
+        // Case 2: Inside the 60s prep window -> run immediately with target_epoch
+        logAppend(`⚡ در بازه آماده‌سازی و گرم‌کردن کانکشن (کمتر از ۱ دقیقه تا هدف) قرار داریم. شروع فوری اتوماسیون (هدف سرخطی: ${sched.timeStr})...`);
+        showToast(`در بازه آماده‌سازی ۶۰ ثانیه پیش از ${sched.timeStr} قرار داریم. شروع گرم‌کردن و شلیک سرخطی...`, true);
         const banner = el("et_schedule_banner");
         if (banner) {
-          banner.innerHTML = `<div>⚡ <strong>آماده‌سازی فوری:</strong> در حال اجرای اتوماسیون جهت ثبت در رأس ساعت [<strong>${escapeHtml(sched.timeStr)}</strong>]</div>`;
+          banner.innerHTML = `<div>⚡ <strong>گرم‌کردن کانکشن و آماده‌سازی:</strong> ارسال در رأس ساعت [<strong>${escapeHtml(sched.timeStr)}</strong>]</div>`;
           banner.classList.add("active");
         }
         await runSingleBuyExecution({ target_epoch: sched.target_epoch, target_time: sched.target_time });
@@ -956,11 +881,10 @@
     const queue = loadQueue();
     if (queue.length === 0) return;
 
-    const dryRun = el("et_dry_run").checked;
     setRunningState("queue", true);
 
     const schedText = scheduleInfo ? ` | زمان‌بندی هدف: ${scheduleInfo.target_time}` : "";
-    logSet(`▶️ شروع اجرای صف شامل ${queue.length} سفارش | حالت: ${dryRun ? "آزمایشی" : "خرید واقعی"}${schedText}`);
+    logSet(`▶️ شروع اجرای صف شامل ${queue.length} سفارش | حالت: خرید واقعی${schedText}`);
 
     for (let i = 0; i < queue.length; i++) {
       if (!isQueueRunning) {
@@ -994,7 +918,6 @@
         const result = await executeBuyRequest(
           item.stock,
           item.qty,
-          dryRun,
           activeCancelId,
           { mode: item.price_mode, value: item.price_value },
           extraParams
@@ -1051,14 +974,9 @@
 
   // Queue Run Click Handler
   async function handleQueueRun() {
-    if (!isLicenseActive) {
-      showLicenseOverlay("لایسنس فعال نیست. لطفاً ابتدا لایسنس را در صفحه اصلی فعال کنید.");
-      setBuyButtonsDisabled(true);
-      return;
-    }
     const creds = getCredentials();
     if (!creds.username || !creds.password) {
-      showToast("لطفاً نام کاربری و رمز عبور را در کارت ۱ وارد کنید.", false);
+      showToast("لطفاً نام کاربری و رمز عبور را در بخش ۱ وارد کنید.", false);
       el("et_username").focus();
       return;
     }
@@ -1076,23 +994,16 @@
       return;
     }
 
-    if (sched.enabled && el("et_dry_run")?.checked) {
-      const ok = confirm("زمان‌بندی با حالت آزمایشی فعال است؛ دکمه «ارسال خرید» زده نمی‌شود و سفارشی ثبت نخواهد شد.\n\nمی‌خواهید ادامه دهید؟");
-      if (!ok) {
-        return;
-      }
-    }
-
     if (sched.enabled) {
       const now = Date.now();
       if (now < sched.T_wake) {
-        // Case 1: Waiting before the 5-min prep window
+        // Case 1: Waiting before the 60s pre-warm window
         startScheduleCountdown(sched, "queue");
         return;
       } else if (now >= sched.T_wake && now < sched.T_target) {
-        // Case 2: Inside the 5-min prep window -> run immediately with target_epoch
-        logAppend(`⚡ در بازه آماده‌سازی ۵ دقیقه‌ای قرار داریم. شروع فوری صف نوبتی (هدف سرخطی: ${sched.timeStr})...`);
-        showToast(`در بازه آماده‌سازی ۵ دقیقه پیش از ${sched.timeStr} قرار داریم. شروع فوری صف...`, true);
+        // Case 2: Inside the 60s prep window -> run immediately with target_epoch
+        logAppend(`⚡ در بازه آماده‌سازی و گرم‌کردن کانکشن (کمتر از ۱ دقیقه تا هدف) قرار داریم. شروع فوری صف نوبتی (هدف سرخطی: ${sched.timeStr})...`);
+        showToast(`در بازه آماده‌سازی ۶۰ ثانیه پیش از ${sched.timeStr} قرار داریم. شروع فوری صف...`, true);
         const banner = el("et_schedule_banner");
         if (banner) {
           banner.innerHTML = `<div>⚡ <strong>آماده‌سازی فوری صف:</strong> در حال اجرای اتوماسیون جهت ثبت در رأس ساعت [<strong>${escapeHtml(sched.timeStr)}</strong>]</div>`;
@@ -1170,7 +1081,35 @@
   window.addEventListener("DOMContentLoaded", () => {
     // Initialize Schedule Inputs
     initScheduleInputs();
-    updateDryRunWarnings();
+
+    // Restore saved credentials if available
+    loadSavedCredentials();
+
+    // Auto-save credentials on form modifications
+    const formFields = ["et_username", "et_password", "et_stock", "et_qty", "et_price", "et_schedule_time"];
+    formFields.forEach((id) => {
+      const inputEl = el(id);
+      if (inputEl) {
+        inputEl.addEventListener("input", saveCredentialsIfRemembered);
+        inputEl.addEventListener("change", saveCredentialsIfRemembered);
+      }
+    });
+
+    document.querySelectorAll('input[name="et_price_mode"]').forEach((r) => {
+      r.addEventListener("change", saveCredentialsIfRemembered);
+    });
+
+    el("et_remember_me")?.addEventListener("change", saveCredentialsIfRemembered);
+
+    // Active press feedback for blast button
+    const blastBtn = el("btn_buy_single");
+    if (blastBtn) {
+      blastBtn.addEventListener("mousedown", () => blastBtn.classList.add("btn-pressed"));
+      blastBtn.addEventListener("mouseup", () => blastBtn.classList.remove("btn-pressed"));
+      blastBtn.addEventListener("mouseleave", () => blastBtn.classList.remove("btn-pressed"));
+      blastBtn.addEventListener("touchstart", () => blastBtn.classList.add("btn-pressed"), { passive: true });
+      blastBtn.addEventListener("touchend", () => blastBtn.classList.remove("btn-pressed"), { passive: true });
+    }
 
     // Buttons
     el("btn_buy_single")?.addEventListener("click", handleSingleBuy);
@@ -1191,6 +1130,12 @@
         handleSingleBuy();
       }
     });
+    el("et_stock")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleSingleBuy();
+      }
+    });
 
     // Price mode toggle
     document.querySelectorAll('input[name="et_price_mode"]').forEach((r) => {
@@ -1200,11 +1145,8 @@
       });
     });
 
-    // Initial render of queue
+    // Initial render of queue & button states
     renderQueue();
-
-    // License heartbeat check (initial check + every 60s)
-    checkLicenseStatus();
-    licenseHeartbeatInterval = setInterval(checkLicenseStatus, 60000);
+    updateButtonsState();
   });
 })();

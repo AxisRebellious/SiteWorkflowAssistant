@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>خرید سریع ایزی‌تریدر (مفید)</title>
+    <title>خرید سریع و سرخطی ایزی‌تریدر (مفید)</title>
     <link rel="stylesheet" href="/static/style.css" />
     <style>
       .badge {
@@ -19,11 +19,6 @@
         background: rgba(34, 197, 94, 0.15);
         color: #4ade80;
         border: 1px solid rgba(34, 197, 94, 0.3);
-      }
-      .badge-dry {
-        background: rgba(245, 158, 11, 0.15);
-        color: #fbbf24;
-        border: 1px solid rgba(245, 158, 11, 0.3);
       }
       .status-pill {
         font-size: 0.75rem;
@@ -109,20 +104,52 @@
         box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
         background: rgba(0, 0, 0, 0.5);
       }
-      .schedule-drywarn {
-        display: none;
-        margin-top: 12px;
-        padding: 10px 14px;
-        border-radius: 8px;
-        background: rgba(245, 158, 11, 0.12);
-        border: 1px solid rgba(245, 158, 11, 0.35);
-        color: #fbbf24;
-        font-size: 0.88rem;
-        line-height: 1.6;
-      }
       select option {
         background: #1e293b;
         color: var(--text-main);
+      }
+      .btn-blast {
+        background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 1.05rem;
+        padding: 14px 28px;
+        border-radius: 10px;
+        box-shadow: 0 4px 20px rgba(37, 99, 235, 0.35);
+        cursor: pointer;
+        transition: all 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+        user-select: none;
+      }
+      .btn-blast:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 25px rgba(37, 99, 235, 0.55);
+        filter: brightness(1.08);
+      }
+      .btn-blast:active:not(:disabled), .btn-blast.btn-pressed {
+        transform: scale(0.97) translateY(2px) !important;
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4) !important;
+        filter: brightness(0.92);
+      }
+      .schedule-guide-box {
+        margin-top: 14px;
+        padding: 12px 16px;
+        border-radius: 8px;
+        background: rgba(59, 130, 246, 0.1);
+        border: 1px solid rgba(59, 130, 246, 0.28);
+        color: #93c5fd;
+        font-size: 0.92rem;
+        line-height: 1.6;
+      }
+      .remember-me-row {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
       }
     </style>
   </head>
@@ -131,17 +158,17 @@
       <a href="/" class="nav-back">← بازگشت به صفحه اصلی دستیار</a>
 
       <header class="hero">
-        <h1>خرید سریع ایزی‌تریدر (مفید)</h1>
-        <p class="hero-lead">اجرای هوشمند و سرخطی سفارش‌های خرید PWA ایزی‌تریدر با حالت آزمایشی (Dry-Run) و صف نوبتی</p>
+        <h1>خرید سریع و سرخطی ایزی‌تریدر (مفید)</h1>
+        <p class="hero-lead">ثبت هوشمند و فوق‌سریع سفارش‌های خرید با گرم‌کردن خودکار کانکشن و ارسال مستقیم در ثانیه هدف</p>
       </header>
 
       <div id="toast" style="margin-top: 12px"></div>
 
-      <!-- کارت ۱: حساب کاربری و تنظیمات -->
+      <!-- ۱. نام کاربری و رمز عبور ایزی‌تریدر -->
       <section class="card" id="card-et-auth">
         <h2>
-          <span>۱. حساب کاربری و حالت اجرا</span>
-          <span class="badge badge-turbo" style="margin-right: auto;">⚡ حالت توربو ثابت (حداکثر سرعت)</span>
+          <span>۱. نام کاربری و رمز عبور ایزی‌تریدر</span>
+          <span class="badge badge-turbo" style="margin-right: auto;">⚡ آماده‌باش پرسرعت</span>
         </h2>
         <div class="grid-2">
           <div class="field">
@@ -154,32 +181,32 @@
           </div>
         </div>
 
-        <div class="spaced-top muted-row">
-          <label class="inline-check" style="cursor: pointer;">
-            <input type="checkbox" id="et_dry_run" checked />
-            <span>
-              <strong>حالت آزمایشی (Dry-Run):</strong>
-              تا مرحله جستجو، انتخاب نماد، پر کردن حجم و کلیک سقف قیمت اجرا می‌شود؛ پنجره مرورگر برای بررسی باز می‌ماند و دکمه نهایی ارسال زده نمی‌شود.
-            </span>
+        <div class="remember-me-row">
+          <label class="inline-check" style="cursor: pointer; font-size: 0.92rem; font-weight: 600; color: var(--text-main);">
+            <input type="checkbox" id="et_remember_me" checked> ذخیره اطلاعات من روی این سیستم
           </label>
-          <p class="muted-small" style="margin-top: 8px;">
-            🔒 امنیت: نام کاربری و کلمه عبور فقط در نشست همان لحظه پردازش می‌شوند و هیچ‌کجا روی دیسک ذخیره نمی‌شوند.
-          </p>
+          <span class="muted-small">🔒 اطلاعات در حافظه مرورگر سیستم شما ذخیره می‌گردد.</span>
         </div>
       </section>
 
-      <!-- کارت ۲: مشخصات سفارش و اجرای تک‌بار -->
+      <!-- ۲. نماد بورسی (مثل فولاد، خودرو) -->
+      <section class="card" id="card-et-stock">
+        <h2>۲. نماد بورسی (مثل فولاد، خودرو)</h2>
+        <div class="field">
+          <label for="et_stock">نام نماد سهام</label>
+          <input id="et_stock" type="text" placeholder="مثلاً فولاد، خودرو، فملی، شستا، خساپا..." style="font-size: 1.05rem;" />
+          <span class="muted-small">نماد به طور خودکار جستجو شده و در فرم خرید ثبت می‌شود.</span>
+        </div>
+      </section>
+
+      <!-- ۳. حجم/تعداد و قیمت (سقف قیمت / دلخواه) -->
       <section class="card" id="card-et-order">
-        <h2>۲. مشخصات سفارش و ثبت فوری</h2>
+        <h2>۳. حجم/تعداد و قیمت (سقف قیمت / دلخواه)</h2>
         <div class="grid-2">
-          <div class="field">
-            <label for="et_stock">نام نماد سهام</label>
-            <input id="et_stock" type="text" placeholder="مثلاً فولاد، خودرو، فملی، شستا..." />
-          </div>
           <div class="field">
             <label for="et_qty">تعداد / حجم خرید</label>
             <input id="et_qty" type="number" min="1" step="1" placeholder="مثلاً ۱۰۰۰" />
-            <label for="et_qty_repeat" style="margin-top: 4px;">تکرار سفارش (هر بار همان حجم)</label>
+            <label for="et_qty_repeat" style="margin-top: 8px;">تکرار سفارش (هر بار همان حجم)</label>
             <select id="et_qty_repeat">
               <option value="1" selected>۱ بار (پیش‌فرض)</option>
               <option value="2">۲ بار</option>
@@ -193,24 +220,8 @@
               <option value="50">۵۰ بار</option>
               <option value="100">۱۰۰ بار</option>
             </select>
-            <span class="muted-small">۳ = سه سفارش ۳۰۰تایی پشت‌هم ثبت می‌شود</span>
           </div>
-        </div>
 
-        <div class="grid-2 spaced-top">
-          <div class="field">
-            <label for="et_retry_max">تلاش تا ثبت نهایی (خرید واقعی)</label>
-            <input id="et_retry_max" type="number" min="1" max="1000000" step="1" value="900" />
-            <span class="muted-small">اگر سامانه «خارج از ساعت معاملات» بگوید، بات تا ۱٬۰۰۰٬۰۰۰ تلاش می‌کند تا سفارش ثبت شود. با فاصله زیر.</span>
-          </div>
-          <div class="field">
-            <label for="et_retry_wait">فاصله بین تلاش‌ها (ثانیه)</label>
-            <input id="et_retry_wait" type="number" min="0.001" max="300" step="0.001" value="45" />
-            <span class="muted-small">برای سرخطی عدد کوچک مثل 0.001 یا 0.002 بگذارید تا پشت‌هم فوراً تلاش شود؛ عدد بزرگ (۴۵) برای پوشش طولانی شب. توقف با «توقف».</span>
-          </div>
-        </div>
-
-        <div class="grid-2 spaced-top">
           <div class="field">
             <label>حالت قیمت</label>
             <label class="inline-check" style="cursor: pointer;">
@@ -222,61 +233,85 @@
               <span><strong>قیمت دلخواه</strong></span>
             </label>
             <input id="et_price" type="number" min="1" step="1" placeholder="مثلاً ۴۲۸۰" disabled style="margin-top: 6px;" />
-            <span class="muted-small">در حالت سقف، سامانه روی فلش سقف قیمت می‌زند؛ در حالت دلخواه، همان قیمت شما درج می‌شود.</span>
-          </div>
-          <div class="field" style="justify-content: center;">
-            <label>وضعیت عملیات جاری</label>
-            <div id="et_single_status" style="font-weight: 500; font-size: 0.95rem; color: var(--text-muted);">آماده</div>
+            <span class="muted-small">در حالت سقف قیمت، سیستم خودکار بالاترین قیمت مجاز نماد را تنظیم می‌کند.</span>
           </div>
         </div>
 
-        <!-- بخش زمان‌بندی هوشمند شروع (سرخطی) -->
-        <div class="schedule-section spaced-top" id="section-et-schedule">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <label class="inline-check" style="cursor: pointer; font-weight: 600; color: var(--text-main);">
-              <input type="checkbox" id="et_schedule_enabled" />
-              <span>⏱️ فعال‌سازی زمان‌بندی خودکار (شروع ۵ دقیقه زودتر برای آماده‌سازی)</span>
-            </label>
+        <div class="grid-2 spaced-top muted-row" style="padding-top: 14px;">
+          <div class="field">
+            <label for="et_retry_max">تلاش تا ثبت نهایی</label>
+            <input id="et_retry_max" type="number" min="1" max="1000000" step="1" value="900" />
+            <span class="muted-small">حداکثر دفعات شلیک مجدد در صورت مواجهه با محدودیت هسته معاملات.</span>
           </div>
-
-          <div id="et_schedule_drywarn" class="schedule-drywarn" style="display: none;">
-            ⚠️ حالت آزمایشی (Dry-Run) فعال است: با این تنظیم، بات تا فرم سفارش می‌رود اما دکمه «ارسال خرید» را نمی‌زند. برای خرید واقعی زمان‌بندی‌شده این گزینه را بردارید.
+          <div class="field">
+            <label for="et_retry_wait">فاصله بین تلاش‌ها (ثانیه)</label>
+            <input id="et_retry_wait" type="number" min="0.001" max="300" step="0.001" value="0.002" />
+            <span class="muted-small">فاصله بین شلیک‌های پیاپی (برای سرخطی فوق‌سریع 0.002 ثانیه توصیه می‌شود).</span>
           </div>
-
-          <div id="et_schedule_inputs_container" class="grid-2 spaced-top" style="display: none;">
-            <div class="field">
-              <label for="et_schedule_date">تاریخ اجرا</label>
-              <input type="date" id="et_schedule_date" />
-            </div>
-            <div class="field">
-              <label for="et_schedule_time">ساعت دقیق سرخطی (ثانیه‌دار)</label>
-              <input type="time" id="et_schedule_time" step="1" value="08:45:00" />
-            </div>
-          </div>
-
-          <p class="muted-small" style="margin-top: 10px; line-height: 1.6;">
-            💡 با فعال‌سازی این گزینه، برنامه دقیقاً ۵ دقیقه پیش از زمان تعیین‌شده (مثلاً ۰۸:۴۰:۰۰) خودکار شروع به کار کرده، وارد حساب می‌شود، نماد را جستجو و فرم خرید را با حجم و قیمت آماده می‌کند تا در رأس زمان مشخص‌شده با تلاش پیوسته سفارش را ثبت نماید.
-          </p>
-
-          <div id="et_schedule_banner" class="schedule-banner"></div>
-        </div>
-
-        <div class="row spaced-top">
-          <button type="button" id="btn_buy_single" class="primary">⚡ اجرای خرید</button>
-          <button type="button" id="btn_stop_single" class="danger small" disabled>⏹️ توقف</button>
-          <button type="button" id="btn_add_to_queue" class="small" style="margin-right: auto;">➕ افزودن به صف خرید</button>
         </div>
       </section>
 
-      <!-- کارت ۳: صف خریدهای نوبتی -->
+      <!-- ۴. ساعت شروع سرخطی (پیش‌فرض 08:45:00) -->
+      <section class="card" id="card-et-schedule">
+        <h2>
+          <span>۴. ساعت شروع سرخطی (پیش‌فرض 08:45:00)</span>
+          <span class="badge badge-turbo" style="margin-right: auto;">⏱️ آماده‌سازی خودکار</span>
+        </h2>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="et_schedule_time">ساعت دقیق سرخطی (ثانیه‌دار)</label>
+            <input type="time" id="et_schedule_time" step="1" value="08:45:00" style="font-size: 1.1rem; font-weight: 600;" />
+          </div>
+          <div class="field">
+            <label for="et_schedule_date">تاریخ اجرا</label>
+            <input type="date" id="et_schedule_date" style="font-size: 1rem;" />
+          </div>
+        </div>
+
+        <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+          <label class="inline-check" style="cursor: pointer; font-weight: 500;">
+            <input type="checkbox" id="et_schedule_enabled" checked />
+            <span>فعال‌سازی زمان‌بندی خودکار</span>
+          </label>
+        </div>
+
+        <div class="schedule-guide-box">
+          💡 سیستم از ۱ دقیقه قبل به‌صورت خودکار کانکشن را گرم کرده و سرخطی را شلیک می‌کند.
+        </div>
+
+        <div id="et_schedule_banner" class="schedule-banner"></div>
+      </section>
+
+      <!-- پنل اجرای عملیات سرخطی -->
+      <section class="card" id="card-et-action" style="background: rgba(15, 23, 42, 0.75); border-color: rgba(59, 130, 246, 0.4); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);">
+        <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-weight: 600; color: var(--text-muted);">وضعیت عملیات:</span>
+            <span id="et_single_status" style="font-weight: 700; font-size: 0.95rem; color: #4ade80;">آماده</span>
+          </div>
+          <button type="button" id="btn_add_to_queue" class="small" style="background: rgba(255, 255, 255, 0.05);">➕ افزودن به صف خرید</button>
+        </div>
+
+        <div class="row" style="gap: 12px;">
+          <button type="button" id="btn_buy_single" class="primary btn-blast" style="flex: 1;">
+            ⚡ شروع سرخطی خودکار (فوق‌سریع)
+          </button>
+          <button type="button" id="btn_stop_single" class="danger" disabled style="padding: 12px 24px; font-weight: 600;">
+            ⏹️ توقف
+          </button>
+        </div>
+      </section>
+
+      <!-- صف خریدهای نوبتی -->
       <section class="card" id="card-et-queue">
         <h2>
-          <span>۳. صف خریدهای نوبتی</span>
+          <span>صف خریدهای نوبتی</span>
           <span id="queue_count_badge" class="badge" style="background: rgba(255,255,255,0.05); margin-right: auto;">۰ سفارش در صف</span>
         </h2>
         
         <div id="et_queue_list" class="queue-list spaced-top"></div>
-        <p id="et_queue_empty" class="muted-small">صف خرید خالی است. نماد و تعداد را در کارت بالا پر کرده و «افزودن به صف خرید» را بزنید.</p>
+        <p id="et_queue_empty" class="muted-small">صف خرید خالی است. نماد و تعداد را مشخص کرده و «افزودن به صف خرید» را بزنید.</p>
 
         <div class="row muted-row spaced-top">
           <button type="button" id="btn_queue_run" class="primary">▶️ اجرای صف نوبتی</button>
@@ -284,19 +319,18 @@
           <button type="button" id="btn_close_browser" class="small" title="بستن نشست فعال و مرورگر باز">🌐 بستن مرورگر</button>
           <button type="button" id="btn_queue_clear" class="danger small" style="margin-right: auto;">🗑️ خالی کردن صف</button>
         </div>
-        <p class="muted-small">سفارش‌های صف با استفاده از مشخصات کاربری کارت ۱ به ترتیب و پشت‌سرهم با اعتبارسنجی ارسال می‌شوند.</p>
       </section>
 
       <!-- گزارش لحظه‌ای لاگ -->
       <section class="card" id="card-et-logs">
         <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
-          <h2 style="margin: 0;">۴. گزارش زنده و لاگ اجرای اتوماسیون</h2>
+          <h2 style="margin: 0;">گزارش زنده و لاگ اجرای اتوماسیون</h2>
           <button type="button" id="btn_clear_log" class="small" style="padding: 4px 10px; font-size: 0.8rem;">پاک کردن لاگ</button>
         </div>
         <pre id="et_log" class="log-box" style="min-height: 140px; max-height: 380px;">منتظر آغاز عملیات...</pre>
       </section>
     </div>
 
-    <script src="/static/easytrader.js?v=20260919-1"></script>
+    <script src="/static/easytrader.js?v=20261108-1"></script>
   </body>
 </html>

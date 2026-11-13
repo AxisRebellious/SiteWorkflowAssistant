@@ -1,6 +1,6 @@
 {
-  "version": "14.4",
-  "updated_at": "2026-11-08",
-  "notes": "موتور شلیک مستقیم (Direct Blast) بدون مرورگر با پیش‌گرم خودکار ۶۰ ثانیه‌ای و جبران پینگ RTT، حذف لایسنس و فعال‌سازی نسخه دائمی، ساده‌سازی رابط کاربری با ذخیره مشخصات (Remember Me) و حذف خرید آزمایشی",
+  "version": "14.5",
+  "updated_at": "2026-11-13",
+  "notes": "حالت تلاش بی‌وقفه تا پذیرش: از ثانیه هدف، سفارش با کانکشن گرم بی‌وقفه تلاش می‌شود و در اولین پذیرشِ سرور فوراً متوقف و ثبت می‌شود؛ وضعیت زنده تعداد تلاش‌ها در رابط کاربری",
   "zip_url": "https://raw.githubusercontent.com/AxisRebellious/SiteWorkflowAssistant/main/dist/SiteWorkflowAssistant_Update.zip"
 }

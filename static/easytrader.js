@@ -23,6 +23,10 @@
   let scheduledMode = null; // 'single' | 'queue'
   let scheduledScheduleInfo = null;
 
+  // Relentless Blast State (until-accepted)
+  let currentBlastTaskId = null;
+  let blastPollTimer = null;
+
   // DOM Helpers
   function el(id) {
     return document.getElementById(id);
@@ -604,7 +608,11 @@
         };
 
         if (mode === "single") {
-          runSingleBuyExecution(execInfo);
+          if (el("et_until_accepted")?.checked) {
+            runUntilAcceptedExecution(execInfo);
+          } else {
+            runSingleBuyExecution(execInfo);
+          }
         } else if (mode === "queue") {
           runQueueExecution(execInfo);
         }
@@ -788,6 +796,128 @@
     }
   }
 
+  // Relentless Blast Execution Runner (Until Accepted)
+  async function runUntilAcceptedExecution(scheduleInfo = null) {
+    const creds = getCredentials();
+    const stock = el("et_stock").value.trim();
+    const qty = el("et_qty").value.trim();
+    const price = getPriceSettings();
+
+    setRunningState("single", true);
+
+    const statusEl = el("et_blast_status");
+    if (statusEl) {
+      statusEl.style.display = "block";
+      statusEl.style.color = "#38bdf8";
+      statusEl.textContent = "در حال تلاش… (۰ تلاش)";
+    }
+
+    const schedText = scheduleInfo ? ` | زمان‌بندی: ${scheduleInfo.target_time}` : "";
+    logSet(`⚡ شروع شلیک سرکش پیش‌گشایی برای نماد: ${stock} | حجم: ${qty} | تلاش بی‌وقفه تا پذیرش${schedText}`);
+
+    const payload = {
+      username: creds.username,
+      password: creds.password,
+      stock: stock,
+      qty: Number(qty) || 1,
+      price_mode: price.mode === "custom" ? "custom" : "max",
+      price_value: price.mode === "custom" ? (price.value || "") : "",
+      until_accepted: true,
+      retry_interval_s: 0.15,
+      max_attempts: 20000,
+      max_duration_s: 1800.0,
+    };
+    if (scheduleInfo && scheduleInfo.target_epoch) {
+      payload.target_epoch = scheduleInfo.target_epoch;
+    }
+    if (scheduleInfo && scheduleInfo.target_time) {
+      payload.target_time = scheduleInfo.target_time;
+    }
+
+    try {
+      const res = await fetch("/api/easytrader/direct_blast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || `خطای سرور (${res.status})`);
+      }
+      currentBlastTaskId = data.task_id;
+      activeCancelId = currentBlastTaskId;
+    } catch (err) {
+      if (statusEl) {
+        statusEl.textContent = "متوقف شد";
+        statusEl.style.color = "#f87171";
+      }
+      showToast("خطا در شروع شلیک مستقیم: " + err.message, false);
+      setRunningState("single", false);
+      return;
+    }
+
+    if (blastPollTimer) {
+      clearInterval(blastPollTimer);
+      blastPollTimer = null;
+    }
+
+    const stopBlastPolling = () => {
+      if (blastPollTimer) {
+        clearInterval(blastPollTimer);
+        blastPollTimer = null;
+      }
+      currentBlastTaskId = null;
+      activeCancelId = null;
+      setRunningState("single", false);
+    };
+
+    const pollStatus = async () => {
+      if (!currentBlastTaskId) return;
+      try {
+        const sRes = await fetch(`/api/easytrader/direct_blast/status?task_id=${encodeURIComponent(currentBlastTaskId)}`);
+        if (!sRes.ok) {
+          if (sRes.status === 404) {
+            stopBlastPolling();
+            if (statusEl) {
+              statusEl.textContent = "متوقف شد";
+              statusEl.style.color = "#f87171";
+            }
+          }
+          return;
+        }
+        const sData = await sRes.json();
+        const attempts = sData.attempts || 0;
+
+        if (sData.status === "running") {
+          if (statusEl) {
+            statusEl.textContent = `در حال تلاش… (${attempts} تلاش)`;
+            statusEl.style.color = "#38bdf8";
+          }
+        } else if (sData.status === "accepted") {
+          if (statusEl) {
+            statusEl.textContent = `پذیرفته شد ✅ (اولِ صف) (${attempts} تلاش)`;
+            statusEl.style.color = "#4ade80";
+          }
+          logAppend(`🎉 سفارش نماد «${stock}» در تلاش ${attempts} توسط کارگزاری پذیرفته شد!`);
+          showToast(`سفارش «${stock}» با موفقیت ثبت شد (تلاش ${attempts})!`, true);
+          stopBlastPolling();
+        } else if (sData.status === "stopped" || sData.status === "failed") {
+          if (statusEl) {
+            statusEl.textContent = "متوقف شد";
+            statusEl.style.color = "#f87171";
+          }
+          logAppend(`⏹️ عملیات متوقف شد (${attempts} تلاش انجام شد).`);
+          stopBlastPolling();
+        }
+      } catch (pollErr) {
+        // Continue polling on transient network error
+      }
+    };
+
+    blastPollTimer = setInterval(pollStatus, 1500);
+    pollStatus();
+  }
+
   // Single Buy Click Handler
   async function handleSingleBuy() {
     // Save credentials if Remember Me is checked
@@ -826,6 +956,33 @@
       return;
     }
 
+    // Relentless Blast mode check
+    if (el("et_until_accepted")?.checked) {
+      if (sched && sched.enabled) {
+        const now = Date.now();
+        if (now < sched.T_wake) {
+          startScheduleCountdown(sched, "single");
+          return;
+        } else if (now >= sched.T_wake && now < sched.T_target) {
+          logAppend(`⚡ در بازه آماده‌سازی و گرم‌کردن کانکشن (کمتر از ۱ دقیقه تا هدف) قرار داریم. شروع فوری پیش‌گشایی (هدف سرخطی: ${sched.timeStr})...`);
+          showToast(`در بازه آماده‌سازی ۶۰ ثانیه پیش از ${sched.timeStr} قرار داریم. شروع گرم‌کردن و شلیک سرکش...`, true);
+          const banner = el("et_schedule_banner");
+          if (banner) {
+            banner.innerHTML = `<div>⚡ <strong>گرم‌کردن کانکشن و پیش‌گشایی:</strong> ارسال بی‌وقفه تا پذیرش در رأس ساعت [<strong>${escapeHtml(sched.timeStr)}</strong>]</div>`;
+            banner.classList.add("active");
+          }
+          await runUntilAcceptedExecution({ target_epoch: sched.target_epoch, target_time: sched.target_time });
+          return;
+        } else {
+          logAppend(`⚡ زمان هدف سپری شده یا هم‌اکنون است. اجرای فوری پیش‌گشایی...`);
+          await runUntilAcceptedExecution(null);
+          return;
+        }
+      }
+      await runUntilAcceptedExecution(null);
+      return;
+    }
+
     if (sched.enabled) {
       const now = Date.now();
       if (now < sched.T_wake) {
@@ -860,6 +1017,33 @@
     singleCancelRequested = true;
     if (isScheduledWaiting && scheduledMode === "single") {
       cancelSchedule("با دکمه توقف خرید");
+      return;
+    }
+    if (currentBlastTaskId) {
+      const tId = currentBlastTaskId;
+      if (blastPollTimer) {
+        clearInterval(blastPollTimer);
+        blastPollTimer = null;
+      }
+      currentBlastTaskId = null;
+      try {
+        logAppend("⏹️ در حال ارسال دستور توقف شلیک به سرور...");
+        await fetch("/api/easytrader/direct_blast/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ task_id: tId }),
+        });
+        const statusEl = el("et_blast_status");
+        if (statusEl) {
+          statusEl.textContent = "متوقف شد";
+          statusEl.style.color = "#f87171";
+        }
+        showToast("شلیک متوقف شد.", true);
+      } catch (err) {
+        showToast("خطا در توقف شلیک: " + err.message, false);
+      } finally {
+        setRunningState("single", false);
+      }
       return;
     }
     if (!activeCancelId) return;

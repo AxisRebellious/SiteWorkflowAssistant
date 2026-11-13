@@ -16,6 +16,7 @@ import asyncio
 from email.utils import parsedate_to_datetime
 import json
 import logging
+from pathlib import Path
 import time
 from typing import Any
 
@@ -26,6 +27,22 @@ logger = logging.getLogger("direct_blast")
 # Strict Mandate: Pre-warming MUST start 60 seconds (1 minute) before the target epoch.
 PRE_WARM_WINDOW_SECONDS: float = 60.0
 PRE_WARM_LEAD_SECONDS: float = PRE_WARM_WINDOW_SECONDS
+
+DEFAULT_ERROR_MARKERS: list[str] = [
+    "خطا",
+    "پذیرش ندارد",
+    "ناموفق",
+    "error",
+    "failed",
+    "rejected",
+]
+DEFAULT_SUCCESS_MARKERS: list[str] = [
+    "accepted",
+    "order_id",
+    "orderId",
+    "شماره سفارش",
+    "موفق",
+]
 
 
 def compile_order_payload(
@@ -254,6 +271,40 @@ class DirectBlastEngine:
         tasks = [_fire_single(i) for i in range(max(1, count))]
         return await asyncio.gather(*tasks)
 
+    async def blast_until_accepted(
+        self,
+        url: str,
+        payload_bytes: bytes,
+        headers: dict[str, str] | None = None,
+        retry_interval_s: float = 0.15,
+        max_attempts: int = 20000,
+        max_duration_s: float = 1800.0,
+        success_markers: list[str] | None = None,
+        error_markers: list[str] | None = None,
+        attempt_log_path: str | Path | None = None,
+        on_attempt: Any = None,
+        initial_backoff_s: float = 1.0,
+    ) -> dict[str, Any]:
+        """
+        Executes a relentless pre-open blast retry loop using the pre-warmed client
+        until an ACCEPTED response is received from the server, or caps are reached.
+        """
+        client = await self.get_client()
+        return await blast_until_accepted(
+            url=url,
+            payload_bytes=payload_bytes,
+            headers=headers,
+            retry_interval_s=retry_interval_s,
+            max_attempts=max_attempts,
+            max_duration_s=max_duration_s,
+            success_markers=success_markers,
+            error_markers=error_markers,
+            attempt_log_path=attempt_log_path,
+            client=client,
+            on_attempt=on_attempt,
+            initial_backoff_s=initial_backoff_s,
+        )
+
     async def close(self) -> None:
         """Closes the underlying HTTP client session if owned by this engine."""
         if self._client is not None and not self.is_closed:
@@ -266,3 +317,153 @@ class DirectBlastEngine:
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         await self.close()
+
+
+async def blast_until_accepted(
+    url: str,
+    payload_bytes: bytes,
+    headers: dict[str, str] | None = None,
+    retry_interval_s: float = 0.15,
+    max_attempts: int = 20000,
+    max_duration_s: float = 1800.0,
+    success_markers: list[str] | None = None,
+    error_markers: list[str] | None = None,
+    attempt_log_path: str | Path | None = None,
+    client: httpx.AsyncClient | None = None,
+    on_attempt: Any = None,
+    initial_backoff_s: float = 1.0,
+) -> dict[str, Any]:
+    """
+    Relentless pre-open blast engine (شلیک سرکش تا پذیرش).
+    Reuses ONE persistent connection across all attempts, hammering until first accepted response.
+    """
+    s_markers = list(DEFAULT_SUCCESS_MARKERS) if success_markers is None else success_markers
+    e_markers = list(DEFAULT_ERROR_MARKERS) if error_markers is None else error_markers
+
+    def _is_accepted(status_code: int, text: str) -> bool:
+        if status_code != 200:
+            return False
+        text_lower = text.lower()
+        if s_markers:
+            for sm in s_markers:
+                if sm.lower() in text_lower:
+                    return True
+            return False
+        # Branch: markers were explicitly provided empty -> treat 200 as success ONLY if body parses as JSON without an 'error'-style field
+        for em in e_markers:
+            if em.lower() in text_lower:
+                return False
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    k_lower = k.lower()
+                    if "error" in k_lower or "err" in k_lower:
+                        if v:
+                            return False
+            return True
+        except Exception:
+            return False
+
+    created_client = False
+    if client is None:
+        limits = httpx.Limits(max_keepalive_connections=50, max_connections=100, keepalive_expiry=120.0)
+        timeout = httpx.Timeout(connect=10.0, read=15.0, write=10.0, pool=15.0)
+        client = httpx.AsyncClient(limits=limits, timeout=timeout)
+        created_client = True
+
+    t_start = time.perf_counter()
+    attempts = 0
+    consecutive_429 = 0
+    accepted = False
+    first_accepted_at: float | None = None
+    last_status_code = 0
+    last_body_snippet = ""
+
+    log_file: Path | None = Path(attempt_log_path) if attempt_log_path else None
+    if log_file:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        while attempts < max_attempts:
+            elapsed = time.perf_counter() - t_start
+            if elapsed >= max_duration_s:
+                break
+
+            attempts += 1
+            status_code = 0
+            snippet = ""
+            is_ok = False
+
+            try:
+                resp = await client.post(url, content=payload_bytes, headers=headers)
+                status_code = resp.status_code
+                snippet = resp.text[:200]
+                last_status_code = status_code
+                last_body_snippet = snippet
+
+                if _is_accepted(status_code, resp.text):
+                    accepted = True
+                    is_ok = True
+                    first_accepted_at = time.time()
+                else:
+                    is_ok = False
+            except Exception as exc:
+                snippet = str(exc)[:200]
+                last_status_code = 0
+                last_body_snippet = snippet
+                is_ok = False
+
+            if log_file:
+                entry = {
+                    "ts": round(time.time(), 3),
+                    "attempt": attempts,
+                    "status_code": status_code,
+                    "ok": is_ok,
+                    "body_snippet": snippet,
+                }
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+            if on_attempt:
+                try:
+                    on_attempt({
+                        "attempt": attempts,
+                        "status_code": status_code,
+                        "body_snippet": snippet,
+                        "accepted": accepted,
+                        "first_accepted_at": first_accepted_at,
+                        "elapsed_s": round(time.perf_counter() - t_start, 3),
+                    })
+                except Exception:
+                    pass
+
+            if accepted:
+                break
+
+            if status_code == 429:
+                consecutive_429 += 1
+                backoff_s = initial_backoff_s * (2 ** (consecutive_429 - 1))
+                rem = max_duration_s - (time.perf_counter() - t_start)
+                if rem <= 0:
+                    break
+                await asyncio.sleep(min(backoff_s, rem))
+            else:
+                consecutive_429 = 0
+                rem = max_duration_s - (time.perf_counter() - t_start)
+                if rem <= 0:
+                    break
+                await asyncio.sleep(min(retry_interval_s, rem))
+    finally:
+        if created_client and client is not None:
+            await client.aclose()
+
+    total_elapsed = round(time.perf_counter() - t_start, 3)
+    return {
+        "accepted": accepted,
+        "attempts": attempts,
+        "first_accepted_at": first_accepted_at,
+        "elapsed_s": total_elapsed,
+        "last_status_code": last_status_code,
+        "last_body_snippet": last_body_snippet,
+    }

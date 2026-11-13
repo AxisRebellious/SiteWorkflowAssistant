@@ -293,6 +293,16 @@
           <button type="button" id="btn_add_to_queue" class="small" style="background: rgba(255, 255, 255, 0.05);">➕ افزودن به صف خرید</button>
         </div>
 
+        <div style="margin-bottom: 14px; padding: 10px 12px; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px;">
+          <label class="inline-check" style="cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="et_until_accepted" />
+            <span>تلاش بی‌وقفه تا پذیرش (پیش‌گشایی)</span>
+          </label>
+          <div class="muted-small" style="margin-top: 5px; color: #94a3b8; font-size: 0.82rem; line-height: 1.5;">
+            سفارش تا لحظه‌ای که سرور پذیرش را باز کند رد می‌شود؛ بات بی‌وقفه تلاش می‌کند و در اولین پذیرش، اولِ صف می‌شوید.
+          </div>
+        </div>
+
         <div class="row" style="gap: 12px;">
           <button type="button" id="btn_buy_single" class="primary btn-blast" style="flex: 1;">
             ⚡ شروع سرخطی خودکار (فوق‌سریع)
@@ -301,6 +311,8 @@
             ⏹️ توقف
           </button>
         </div>
+
+        <div id="et_blast_status" class="muted-small" style="margin-top: 10px; font-weight: 600; font-size: 0.9rem; text-align: center; display: none;"></div>
       </section>
 
       <!-- صف خریدهای نوبتی -->

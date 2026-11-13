@@ -33,6 +33,7 @@ from direct_blast import (
     compile_order_payload,
     calculate_fire_epoch,
     calculate_prewarm_epoch,
+    blast_until_accepted,
     PRE_WARM_WINDOW_SECONDS,
 )
 
@@ -53,6 +54,8 @@ stop_monitor = asyncio.Event()
 monitor_task: asyncio.Task[Any] | None = None
 
 playback_cancel_registry: dict[str, asyncio.Event] = {}
+blast_tasks: dict[str, dict[str, Any]] = {}
+blast_task_handles: dict[str, asyncio.Task[Any]] = {}
 
 
 async def _bale_try_send(
@@ -783,6 +786,14 @@ class DirectBlastBody(BaseModel):
     base_url: str | None = None
     burst_count: int = 3
     cancellation_id: str = ""
+    until_accepted: bool = False
+    retry_interval_s: float = 0.15
+    max_attempts: int = 20000
+    max_duration_s: float = 1800.0
+
+
+class DirectBlastStopBody(BaseModel):
+    task_id: str
 
 
 class EasyTraderBuyBody(BaseModel):
@@ -803,6 +814,10 @@ class EasyTraderBuyBody(BaseModel):
     base_url: str | None = None
     direct_blast: bool = False
     direct_mode: bool = False
+    until_accepted: bool = False
+    retry_interval_s: float = 0.15
+    max_attempts: int = 20000
+    max_duration_s: float = 1800.0
 
 
 def parse_target_epoch(target_time: str = "", target_epoch: float | None = None) -> float | None:
@@ -1358,6 +1373,110 @@ def compose_easytrader_scenario(
     return scenario
 
 
+async def _background_blast_worker(
+    task_id: str,
+    clean_base: str,
+    order_url: str,
+    payload_bytes: bytes,
+    req_headers: dict[str, str],
+    effective_target_epoch: float | None,
+    cancel_evt: asyncio.Event | None,
+    retry_interval_s: float,
+    max_attempts: int,
+    max_duration_s: float,
+    log_path: Path,
+    engine: DirectBlastEngine | None = None,
+) -> None:
+    own_engine = False
+    if engine is None:
+        engine = DirectBlastEngine()
+        own_engine = True
+
+    state = blast_tasks[task_id]
+
+    def _on_attempt(info: dict[str, Any]) -> None:
+        state["attempts"] = info["attempt"]
+        state["last_status_code"] = info["status_code"]
+        state["last_body_snippet"] = info["body_snippet"]
+        state["elapsed_s"] = info["elapsed_s"]
+        if info.get("accepted"):
+            state["status"] = "accepted"
+            state["first_accepted_at"] = info.get("first_accepted_at")
+
+    try:
+        if effective_target_epoch is not None:
+            now = time.time()
+            prewarm_epoch = calculate_prewarm_epoch(effective_target_epoch, PRE_WARM_WINDOW_SECONDS)
+            delay_prewarm = prewarm_epoch - now
+            if delay_prewarm > 0:
+                if cancel_evt:
+                    try:
+                        await asyncio.wait_for(cancel_evt.wait(), timeout=delay_prewarm)
+                        state["status"] = "stopped"
+                        return
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(delay_prewarm)
+
+            await engine.pre_warm(clean_base)
+            rtt_s, server_offset_s = await engine.calibrate_ping(clean_base)
+
+            fire_epoch = calculate_fire_epoch(effective_target_epoch, rtt_s, server_offset_s)
+            delay_fire = fire_epoch - time.time()
+            if delay_fire > 0:
+                if cancel_evt:
+                    try:
+                        await asyncio.wait_for(cancel_evt.wait(), timeout=delay_fire)
+                        state["status"] = "stopped"
+                        return
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(delay_fire)
+        else:
+            await engine.pre_warm(clean_base)
+            await engine.calibrate_ping(clean_base)
+
+        if state["status"] == "stopped":
+            return
+
+        res = await engine.blast_until_accepted(
+            url=order_url,
+            payload_bytes=payload_bytes,
+            headers=req_headers,
+            retry_interval_s=retry_interval_s,
+            max_attempts=max_attempts,
+            max_duration_s=max_duration_s,
+            attempt_log_path=log_path,
+            on_attempt=_on_attempt,
+        )
+
+        state["attempts"] = res["attempts"]
+        state["elapsed_s"] = res["elapsed_s"]
+        state["last_status_code"] = res["last_status_code"]
+        state["last_body_snippet"] = res["last_body_snippet"]
+
+        if res["accepted"]:
+            state["status"] = "accepted"
+            state["first_accepted_at"] = res["first_accepted_at"]
+        else:
+            if state["status"] != "stopped":
+                state["status"] = "failed"
+
+    except asyncio.CancelledError:
+        state["status"] = "stopped"
+        state["elapsed_s"] = round(time.time() - state.get("start_time", time.time()), 3)
+    except Exception as exc:
+        log.exception("Error in background blast task %s: %s", task_id, exc)
+        state["status"] = "failed"
+        state["last_body_snippet"] = str(exc)[:200]
+        state["elapsed_s"] = round(time.time() - state.get("start_time", time.time()), 3)
+    finally:
+        if own_engine:
+            await engine.close()
+
+
 async def execute_direct_blast(
     stock: str,
     qty: str | int = 1,
@@ -1370,6 +1489,10 @@ async def execute_direct_blast(
     cancellation_id: str = "",
     engine: DirectBlastEngine | None = None,
     headers: dict[str, str] | None = None,
+    until_accepted: bool = False,
+    retry_interval_s: float = 0.15,
+    max_attempts: int = 20000,
+    max_duration_s: float = 1800.0,
 ) -> dict[str, Any]:
     stock_clean = str(stock or "").strip()
     if not stock_clean:
@@ -1415,6 +1538,52 @@ async def execute_direct_blast(
     cancel_evt = playback_cancel_registry.get(cancel_id) if cancel_id else None
 
     effective_target_epoch = parse_target_epoch(target_time, target_epoch)
+
+    if until_accepted:
+        task_id = str(uuid.uuid4())
+        log_dir = ROOT / "data" / "logs" / "blast_tasks"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"{task_id}.jsonl"
+
+        state = {
+            "task_id": task_id,
+            "status": "running",
+            "until_accepted": True,
+            "stock": stock_clean,
+            "qty": qty_int,
+            "attempts": 0,
+            "first_accepted_at": None,
+            "last_status_code": 0,
+            "last_body_snippet": "",
+            "elapsed_s": 0.0,
+            "start_time": time.time(),
+            "log_path": str(log_path),
+        }
+        blast_tasks[task_id] = state
+
+        bg_task = asyncio.create_task(
+            _background_blast_worker(
+                task_id=task_id,
+                clean_base=clean_base,
+                order_url=order_url,
+                payload_bytes=payload_bytes,
+                req_headers=req_headers,
+                effective_target_epoch=effective_target_epoch,
+                cancel_evt=cancel_evt,
+                retry_interval_s=float(retry_interval_s or 0.15),
+                max_attempts=int(max_attempts or 20000),
+                max_duration_s=float(max_duration_s or 1800.0),
+                log_path=log_path,
+                engine=engine,
+            )
+        )
+        blast_task_handles[task_id] = bg_task
+
+        return {
+            "task_id": task_id,
+            "status": "running",
+            "until_accepted": True,
+        }
 
     own_engine = False
     if engine is None:
@@ -1493,7 +1662,59 @@ async def easytrader_direct_blast(body: DirectBlastBody) -> dict[str, Any]:
         base_url=body.base_url,
         burst_count=body.burst_count,
         cancellation_id=body.cancellation_id,
+        until_accepted=body.until_accepted,
+        retry_interval_s=body.retry_interval_s,
+        max_attempts=body.max_attempts,
+        max_duration_s=body.max_duration_s,
     )
+
+
+@app.get("/api/easytrader/direct_blast/status")
+async def easytrader_direct_blast_status(task_id: str) -> dict[str, Any]:
+    _require_license()
+    t_id = str(task_id or "").strip()
+    if not t_id or t_id not in blast_tasks:
+        raise HTTPException(status_code=404, detail="شناسه تسک پیدا نشد.")
+
+    state = blast_tasks[t_id]
+    st = state.get("status", "running")
+    if st == "running":
+        elapsed = round(time.time() - state.get("start_time", time.time()), 3)
+    else:
+        elapsed = round(state.get("elapsed_s", 0.0), 3)
+
+    return {
+        "task_id": t_id,
+        "status": st,
+        "attempts": state.get("attempts", 0),
+        "first_accepted_at": state.get("first_accepted_at"),
+        "last_status_code": state.get("last_status_code", 0),
+        "last_body_snippet": state.get("last_body_snippet", ""),
+        "elapsed_s": elapsed,
+    }
+
+
+@app.post("/api/easytrader/direct_blast/stop")
+async def easytrader_direct_blast_stop(body: DirectBlastStopBody) -> dict[str, Any]:
+    _require_license()
+    t_id = str(body.task_id or "").strip()
+    if not t_id or t_id not in blast_tasks:
+        raise HTTPException(status_code=404, detail="شناسه تسک پیدا نشد.")
+
+    handle = blast_task_handles.get(t_id)
+    if handle and not handle.done():
+        handle.cancel()
+
+    state = blast_tasks[t_id]
+    state["status"] = "stopped"
+    if state.get("start_time"):
+        state["elapsed_s"] = round(time.time() - state["start_time"], 3)
+
+    return {
+        "ok": True,
+        "task_id": t_id,
+        "status": "stopped",
+    }
 
 
 @app.post("/api/easytrader/buy")
@@ -1510,6 +1731,10 @@ async def easytrader_buy(body: EasyTraderBuyBody) -> dict[str, Any]:
             base_url=body.base_url,
             burst_count=3,
             cancellation_id=body.cancellation_id,
+            until_accepted=getattr(body, "until_accepted", False),
+            retry_interval_s=getattr(body, "retry_interval_s", 0.15),
+            max_attempts=getattr(body, "max_attempts", 20000),
+            max_duration_s=getattr(body, "max_duration_s", 1800.0),
         )
     username = body.username.strip()
     password = body.password.strip()

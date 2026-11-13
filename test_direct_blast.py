@@ -16,6 +16,7 @@ from direct_blast import (
     calculate_fire_epoch,
     calculate_prewarm_epoch,
     compile_order_payload,
+    blast_until_accepted,
 )
 
 
@@ -233,6 +234,160 @@ class TestDirectBlastEngineAsync(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(engine.is_closed)
 
 
+class TestBlastUntilAccepted(unittest.IsolatedAsyncioTestCase):
+    async def test_blast_until_accepted_reject_then_accept(self):
+        call_count = 0
+
+        def handler(request: httpx.Request):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 5:
+                return httpx.Response(200, json={"status": "rejected", "message": "خطا در هسته معاملات"})
+            return httpx.Response(200, json={"order_id": 98765, "status": "accepted"})
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        engine = DirectBlastEngine(client=client)
+
+        result = await engine.blast_until_accepted(
+            url="https://m.easytrader.ir/api/orders",
+            payload_bytes=b'{"test":1}',
+            headers={"Authorization": "Bearer token"},
+            retry_interval_s=0.01,
+        )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["attempts"], 6)
+        self.assertIsNotNone(result["first_accepted_at"])
+        self.assertEqual(result["last_status_code"], 200)
+        self.assertIn("order_id", result["last_body_snippet"])
+        await engine.close()
+
+    async def test_blast_until_accepted_max_attempts_cap(self):
+        def handler(request: httpx.Request):
+            return httpx.Response(200, json={"status": "error", "message": "خطا: بازار بسته است"})
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        engine = DirectBlastEngine(client=client)
+
+        result = await engine.blast_until_accepted(
+            url="https://m.easytrader.ir/api/orders",
+            payload_bytes=b'{"test":1}',
+            headers={},
+            retry_interval_s=0.01,
+            max_attempts=5,
+        )
+
+        self.assertFalse(result["accepted"])
+        self.assertLessEqual(result["attempts"], 5)
+        self.assertEqual(result["attempts"], 5)
+        self.assertIsNone(result["first_accepted_at"])
+        await engine.close()
+
+    async def test_blast_until_accepted_429_backoff(self):
+        call_count = 0
+
+        def handler(request: httpx.Request):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                return httpx.Response(429, json={"error": "Too Many Requests"})
+            return httpx.Response(200, json={"order_id": 112233})
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        engine = DirectBlastEngine(client=client)
+
+        # Exponential backoff starts at 1.0s: attempt 1 (429) sleeps 1.0s, attempt 2 (429) sleeps 2.0s -> total >= 3.0s
+        result = await engine.blast_until_accepted(
+            url="https://m.easytrader.ir/api/orders",
+            payload_bytes=b'{"test":1}',
+            headers={},
+            retry_interval_s=0.01,
+        )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["attempts"], 3)
+        self.assertGreaterEqual(result["elapsed_s"], 3.0)
+        self.assertEqual(result["last_status_code"], 200)
+        await engine.close()
+
+    async def test_blast_until_accepted_attempt_log_jsonl(self):
+        import tempfile
+        call_count = 0
+
+        def handler(request: httpx.Request):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 4:
+                return httpx.Response(200, json={"message": "خطا - پذیرش ندارد"})
+            return httpx.Response(200, json={"orderId": "ORD-LOG-1"})
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        engine = DirectBlastEngine(client=client)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "sub" / "attempt_log.jsonl"
+            result = await engine.blast_until_accepted(
+                url="https://m.easytrader.ir/api/orders",
+                payload_bytes='{"stock":"فولاد"}'.encode("utf-8"),
+                headers={},
+                retry_interval_s=0.01,
+                attempt_log_path=log_path,
+            )
+
+            self.assertTrue(result["accepted"])
+            self.assertEqual(result["attempts"], 4)
+            self.assertTrue(log_path.exists())
+
+            with open(log_path, "r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f if line.strip()]
+
+            self.assertEqual(len(lines), result["attempts"])
+            entries = [json.loads(line) for line in lines]
+            for idx, entry in enumerate(entries, start=1):
+                self.assertEqual(entry["attempt"], idx)
+                self.assertIn("ts", entry)
+                self.assertIn("status_code", entry)
+                self.assertIn("ok", entry)
+                self.assertIn("body_snippet", entry)
+
+            # Last entry should be accepted
+            self.assertTrue(entries[-1]["ok"])
+            self.assertFalse(entries[0]["ok"])
+
+        await engine.close()
+
+    async def test_blast_until_accepted_empty_markers_json_check(self):
+        call_count = 0
+
+        def handler(request: httpx.Request):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return httpx.Response(200, json={"err": "Invalid window"})
+            return httpx.Response(200, json={"result": "created"})
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        engine = DirectBlastEngine(client=client)
+
+        result = await engine.blast_until_accepted(
+            url="https://m.easytrader.ir/api/orders",
+            payload_bytes=b'{"stock":"test"}',
+            headers={},
+            retry_interval_s=0.01,
+            success_markers=[],
+            error_markers=["خطا", "failed"],
+        )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["attempts"], 2)
+        await engine.close()
+
+
 class TestDirectBlastAPIIntegration(unittest.TestCase):
     def setUp(self):
         from fastapi.testclient import TestClient
@@ -376,6 +531,103 @@ class TestDirectBlastAPIIntegration(unittest.TestCase):
         self.assertTrue(data["prewarm_60s"])
         mock_prewarm.assert_awaited_once()
         mock_blast.assert_awaited_once()
+
+    @patch("main.DirectBlastEngine.pre_warm")
+    @patch("main.DirectBlastEngine.calibrate_ping")
+    def test_direct_blast_until_accepted_poll_flow(self, mock_calibrate, mock_prewarm):
+        mock_prewarm.return_value = True
+        mock_calibrate.return_value = (0.010, 0.0)
+
+        async def fake_blast(*args, **kwargs):
+            on_attempt = kwargs.get("on_attempt")
+            if on_attempt:
+                on_attempt({"attempt": 1, "status_code": 200, "body_snippet": "خطا", "accepted": False, "elapsed_s": 0.01})
+                on_attempt({"attempt": 2, "status_code": 200, "body_snippet": '{"order_id": 999}', "accepted": True, "first_accepted_at": time.time(), "elapsed_s": 0.02})
+            return {
+                "accepted": True,
+                "attempts": 2,
+                "first_accepted_at": time.time(),
+                "elapsed_s": 0.02,
+                "last_status_code": 200,
+                "last_body_snippet": '{"order_id": 999}',
+            }
+
+        with patch("main.DirectBlastEngine.blast_until_accepted", side_effect=fake_blast):
+            resp = self.client.post(
+                "/api/easytrader/direct_blast",
+                json={
+                    "stock": "فولاد",
+                    "qty": 100,
+                    "until_accepted": True,
+                },
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertIn("task_id", data)
+            self.assertTrue(data["until_accepted"])
+            task_id = data["task_id"]
+
+            # Poll status until accepted
+            status_data = None
+            for _ in range(20):
+                st_resp = self.client.get(f"/api/easytrader/direct_blast/status?task_id={task_id}")
+                self.assertEqual(st_resp.status_code, 200)
+                status_data = st_resp.json()
+                if status_data["status"] == "accepted":
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(status_data["status"], "accepted")
+            self.assertEqual(status_data["attempts"], 2)
+            self.assertIsNotNone(status_data["first_accepted_at"])
+            self.assertEqual(status_data["last_status_code"], 200)
+
+    @patch("main.DirectBlastEngine.pre_warm")
+    @patch("main.DirectBlastEngine.calibrate_ping")
+    def test_direct_blast_until_accepted_stop_flow(self, mock_calibrate, mock_prewarm):
+        mock_prewarm.return_value = True
+        mock_calibrate.return_value = (0.010, 0.0)
+
+        async def fake_hanging_blast(*args, **kwargs):
+            on_attempt = kwargs.get("on_attempt")
+            if on_attempt:
+                on_attempt({"attempt": 1, "status_code": 200, "body_snippet": "خطا", "accepted": False, "elapsed_s": 0.01})
+            while True:
+                await asyncio.sleep(0.05)
+
+        with patch("main.DirectBlastEngine.blast_until_accepted", side_effect=fake_hanging_blast):
+            resp = self.client.post(
+                "/api/easytrader/direct_blast",
+                json={
+                    "stock": "فولاد",
+                    "qty": 50,
+                    "until_accepted": True,
+                },
+            )
+            self.assertEqual(resp.status_code, 200)
+            task_id = resp.json()["task_id"]
+
+            # Wait briefly so task is running
+            time.sleep(0.05)
+
+            # Check status running
+            st_resp = self.client.get(f"/api/easytrader/direct_blast/status?task_id={task_id}")
+            self.assertEqual(st_resp.status_code, 200)
+            self.assertIn(st_resp.json()["status"], ("running", "stopped"))
+
+            # Call stop endpoint
+            stop_resp = self.client.post(
+                "/api/easytrader/direct_blast/stop",
+                json={"task_id": task_id},
+            )
+            self.assertEqual(stop_resp.status_code, 200)
+            self.assertTrue(stop_resp.json()["ok"])
+            self.assertEqual(stop_resp.json()["status"], "stopped")
+
+            # Check status is now stopped
+            final_status = self.client.get(f"/api/easytrader/direct_blast/status?task_id={task_id}")
+            self.assertEqual(final_status.status_code, 200)
+            self.assertEqual(final_status.json()["status"], "stopped")
 
 
 if __name__ == "__main__":
